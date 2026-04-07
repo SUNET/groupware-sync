@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import typer
 
 from groupware_sync_auth import service
@@ -159,7 +160,7 @@ def login(
         uc = service.login(
             provider_name=provider, uid=uid, on_device_code=_print_device_code
         )
-    except (ValueError, OAuthError) as e:
+    except (ValueError, OAuthError, httpx.HTTPError) as e:
         typer.echo(f"login failed: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(
@@ -286,7 +287,7 @@ def import_token_cmd(
 ) -> None:
     try:
         uc = service.import_token(provider, uid, refresh_token, email)
-    except (ValueError, OAuthError) as e:
+    except (ValueError, OAuthError, httpx.HTTPError) as e:
         typer.echo(f"import failed: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(f"imported: uid={uc.uid} email={uc.email}")
