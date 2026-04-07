@@ -2,7 +2,7 @@
 
 Public functions:
     add_provider, list_providers, get_provider, remove_provider
-    login, logout, list_accounts, get_account
+    login, logout, list_accounts, get_accounts_by_uid
     refresh_one, refresh_due
     import_token
 
@@ -195,6 +195,11 @@ def login(
         s.refresh(uc)
 
     if token_set.refresh_token is None:
+        log.warning(
+            "login left a DB row for uid=%s provider=%s without a keyring entry "
+            "— run `logout --uid %s --provider %s` to clean up",
+            uid, provider_name, uid, provider_name,
+        )
         raise OAuthError(
             "provider did not return a refresh_token — is offline_access in scope?"
         )
