@@ -14,7 +14,7 @@ from typing import Optional
 import typer
 
 from groupware_sync_auth import service
-from groupware_sync_auth.oauth import DeviceAuthorization
+from groupware_sync_auth.oauth import DeviceAuthorization, OAuthError
 from groupware_sync_auth.storage import secrets
 
 app = typer.Typer(
@@ -133,8 +133,8 @@ def login(
         uc = service.login(
             provider_name=provider, uid=uid, on_device_code=_print_device_code
         )
-    except ValueError as e:
-        typer.echo(str(e), err=True)
+    except (ValueError, OAuthError) as e:
+        typer.echo(f"login failed: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(
         f"logged in: uid={uc.uid} email={uc.email} provider_id={uc.provider_id}"
@@ -260,8 +260,8 @@ def import_token_cmd(
 ) -> None:
     try:
         uc = service.import_token(provider, uid, refresh_token, email)
-    except ValueError as e:
-        typer.echo(str(e), err=True)
+    except (ValueError, OAuthError) as e:
+        typer.echo(f"import failed: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(f"imported: uid={uc.uid} email={uc.email}")
 
