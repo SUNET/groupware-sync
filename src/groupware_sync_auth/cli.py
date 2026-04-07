@@ -17,6 +17,32 @@ from groupware_sync_auth import service
 from groupware_sync_auth.oauth import DeviceAuthorization, OAuthError
 from groupware_sync_auth.storage import secrets
 
+SYSTEMD_SERVICE_TEMPLATE = """\
+[Unit]
+Description=Refresh OAuth tokens for groupware-sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/groupware-sync-auth tick --horizon {horizon}
+"""
+
+SYSTEMD_TIMER_TEMPLATE = """\
+[Unit]
+Description=Periodic OAuth token refresh
+Requires=groupware-sync-auth.service
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={interval}
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
 app = typer.Typer(
     help="OAuth helper for groupware-sync development",
     no_args_is_help=True,
@@ -264,6 +290,35 @@ def import_token_cmd(
         typer.echo(f"import failed: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(f"imported: uid={uc.uid} email={uc.email}")
+
+
+@app.command("install-systemd")
+def install_systemd(
+    horizon: str = typer.Option(
+        "15m", "--horizon", help="Passed to `tick --horizon`"
+    ),
+    interval: str = typer.Option(
+        "5min", "--interval", help="systemd timer OnUnitActiveSec value"
+    ),
+) -> None:
+    target = Path.home() / ".config" / "systemd" / "user"
+    target.mkdir(parents=True, exist_ok=True)
+    service_path = target / "groupware-sync-auth.service"
+    timer_path = target / "groupware-sync-auth.timer"
+
+    service_path.write_text(SYSTEMD_SERVICE_TEMPLATE.format(horizon=horizon))
+    timer_path.write_text(SYSTEMD_TIMER_TEMPLATE.format(interval=interval))
+
+    typer.echo(f"wrote {service_path}")
+    typer.echo(f"wrote {timer_path}")
+    typer.echo("")
+    typer.echo("Next steps:")
+    typer.echo("  systemctl --user daemon-reload")
+    typer.echo("  systemctl --user enable --now groupware-sync-auth.timer")
+    typer.echo("")
+    typer.echo("To check it is running:")
+    typer.echo("  systemctl --user list-timers groupware-sync-auth.timer")
+    typer.echo("  journalctl --user -u groupware-sync-auth -f")
 
 
 if __name__ == "__main__":
