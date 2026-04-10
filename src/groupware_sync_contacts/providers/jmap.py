@@ -42,6 +42,7 @@ class JmapContactProvider:
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=TIMEOUT,
+            follow_redirects=True,
         )
         self._api_url: Optional[str] = None
         self._account_id: Optional[str] = None
@@ -85,7 +86,7 @@ class JmapContactProvider:
         }
         r = self._client.post(self._api_url, json=body)
         r.raise_for_status()
-        return r.json()["methodCalls"]
+        return r.json()["methodResponses"]
 
     # ---- addressbooks --------------------------------------------------------
 
