@@ -320,6 +320,11 @@ def _incremental_sync(
 
     # Handle deletions (Phase 6)
     for mapping in existing_mappings:
+        if mapping.a_contact_id in a_destroyed and mapping.b_contact_id in b_destroyed:
+            # Both sides deleted — just clean up the mapping
+            ops.delete_mapping(s, mapping)
+            summary.deleted += 1
+            continue
         if mapping.a_contact_id in a_destroyed:
             try:
                 prov_b.delete_contact(b_book_id, mapping.b_contact_id)
