@@ -269,22 +269,37 @@ def _graph_to_sync_item(item: dict[str, Any]) -> SyncItem:
     if item.get("personalNotes") is not None:
         fields["notes"] = item["personalNotes"]
 
-    # Emails
+    # Emails — Graph's emailAddresses[].name is the person's display name,
+    # NOT a type label. We don't have a reliable type, so use "other".
     emails: list[dict[str, str]] = []
+    seen_emails: set[str] = set()
     for e in item.get("emailAddresses", []):
         addr = e.get("address")
-        if not addr:
+        if not addr or addr.lower() in seen_emails:
             continue
-        label = (e.get("name", "other") or "other").lower()
-        emails.append({"label": label, "value": addr})
+        seen_emails.add(addr.lower())
+        emails.append({"label": "other", "value": addr})
     if emails:
         fields["emails"] = emails
 
-    # Phones
+    # Phones — Graph stores phones in separate top-level fields,
+    # not (only) in the phones[] array.
     phones: list[dict[str, str]] = []
+    if item.get("mobilePhone"):
+        phones.append({"label": "mobile", "value": item["mobilePhone"]})
+    for bp in item.get("businessPhones", []):
+        if bp:
+            phones.append({"label": "work", "value": bp})
+    for hp in item.get("homePhones", []):
+        if hp:
+            phones.append({"label": "home", "value": hp})
+    # Also check the phones[] array as fallback
     for p in item.get("phones", []):
         number = p.get("number")
         if not number:
+            continue
+        # Avoid duplicates
+        if any(ph["value"] == number for ph in phones):
             continue
         label = (p.get("type", "other") or "other").lower().replace("business", "work")
         phones.append({"label": label, "value": number})
@@ -347,18 +362,29 @@ def _sync_item_to_graph(item: SyncItem) -> dict[str, Any]:
 
     # Emails
     body["emailAddresses"] = [
-        {"name": e["label"].capitalize(), "address": e["value"]}
+        {"name": e.get("label", "").capitalize() or "", "address": e["value"]}
         for e in fields.get("emails", [])
     ]
 
-    # Phones
-    body["phones"] = [
-        {
-            "type": p["label"].replace("work", "business"),
-            "number": p["value"],
-        }
-        for p in fields.get("phones", [])
-    ]
+    # Phones — Graph uses separate top-level fields
+    mobile = None
+    business_phones: list[str] = []
+    home_phones: list[str] = []
+    for p in fields.get("phones", []):
+        label = p.get("label", "other")
+        number = p["value"]
+        if label == "mobile" and mobile is None:
+            mobile = number
+        elif label == "work":
+            business_phones.append(number)
+        elif label == "home":
+            home_phones.append(number)
+        else:
+            # Put unknown types in business phones as fallback
+            business_phones.append(number)
+    body["mobilePhone"] = mobile
+    body["businessPhones"] = business_phones
+    body["homePhones"] = home_phones
 
     # Addresses -- Graph has fixed slots, not an array
     addr_map = {a["label"]: a for a in fields.get("addresses", [])}
