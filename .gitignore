@@ -8,3 +8,4 @@ dist/
 auth.db
 *.db
 .claude/
+.env
