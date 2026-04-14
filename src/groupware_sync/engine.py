@@ -40,6 +40,7 @@ def sync_trees(
     item_type: ItemType,
     type_spec: TypeSpec,
     session: Session,
+    dry_run: bool = False,
 ) -> SyncSummary:
     """Run a full two-way tree sync between two providers.
 
@@ -48,6 +49,9 @@ def sync_trees(
       2. Compute Merkle hashes bottom-up.
       3. Compare trees against stored state -> list of SyncOps.
       4. Execute operations (creates, merges, deletes).
+
+    If dry_run=True, phases 1-3 run but phase 4 is skipped. The returned
+    summary reflects what *would* happen. The operation plan is logged.
 
     Returns a SyncSummary with counts of each operation type.
     """
@@ -88,6 +92,12 @@ def sync_trees(
     )
     log.info("Phase 3 produced %d operations", len(operations))
 
+    if dry_run:
+        # Log the plan without executing
+        _log_dry_run(operations, provider_a.name, provider_b.name, summary)
+        log.info("Dry run complete — no changes made")
+        return summary
+
     # Phase 4 — Execute operations
     log.info("Phase 4: executing operations")
     _execute_ops(
@@ -110,6 +120,49 @@ def sync_trees(
         summary.errors,
     )
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Dry-run reporting
+# ---------------------------------------------------------------------------
+
+
+def _log_dry_run(
+    operations: list[SyncOp],
+    prov_a_name: str,
+    prov_b_name: str,
+    summary: SyncSummary,
+) -> None:
+    """Log what each operation would do, and populate the summary counts."""
+    from collections import Counter
+
+    counts = Counter(op.op_type for op in operations)
+    summary.created = counts.get(OpType.CREATE_ITEM, 0)
+    summary.deleted = counts.get(OpType.DELETE_ITEM, 0)
+    summary.updated = counts.get(OpType.MERGE_ITEM, 0)
+    summary.containers = counts.get(OpType.CREATE_CONTAINER, 0)
+    summary.skipped = counts.get(OpType.SKIP_SUBTREE, 0)
+
+    for op in operations:
+        if op.op_type == OpType.SKIP_SUBTREE:
+            log.info("[dry-run] SKIP subtree %s", op.node_id)
+        elif op.op_type == OpType.CREATE_CONTAINER:
+            target = prov_b_name if op.target_side == "b" else prov_a_name
+            log.info("[dry-run] CREATE container %r on %s", op.container_name, target)
+        elif op.op_type == OpType.CREATE_ITEM:
+            target = prov_b_name if op.target_side == "b" else prov_a_name
+            log.info("[dry-run] CREATE item %s on %s", op.node_id, target)
+        elif op.op_type == OpType.MERGE_ITEM:
+            log.info("[dry-run] MERGE item %s ↔ %s", op.node_id, op.paired_node_id)
+        elif op.op_type == OpType.DELETE_ITEM:
+            if op.target_side == "both":
+                log.info("[dry-run] DELETE (both gone) %s ↔ %s", op.node_id, op.paired_node_id)
+            else:
+                target = prov_b_name if op.target_side == "b" else prov_a_name
+                log.info("[dry-run] DELETE item %s on %s", op.node_id, target)
+        elif op.op_type == OpType.DELETE_CONTAINER:
+            target = prov_b_name if op.target_side == "b" else prov_a_name
+            log.info("[dry-run] DELETE container %s on %s", op.node_id, target)
 
 
 # ---------------------------------------------------------------------------

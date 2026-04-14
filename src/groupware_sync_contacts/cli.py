@@ -108,6 +108,7 @@ def sync_cmd(
 @app.command(name="sync-v2")
 def sync_v2_cmd(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be done without making changes"),
 ) -> None:
     """Two-way sync using the tree-based framework engine."""
     _setup_logging(verbose)
@@ -154,7 +155,7 @@ def sync_v2_cmd(
 
     try:
         with sf() as session:
-            summary = sync_trees(jmap, graph, ItemType.CONTACT, CONTACT_SPEC, session)
+            summary = sync_trees(jmap, graph, ItemType.CONTACT, CONTACT_SPEC, session, dry_run=dry_run)
     except Exception as e:
         log.error("sync-v2 failed: %s", e, exc_info=True)
         typer.echo(f"sync-v2 failed: {e}", err=True)
