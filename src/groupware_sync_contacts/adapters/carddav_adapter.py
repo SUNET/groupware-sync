@@ -11,6 +11,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
+from xml.sax.saxutils import escape as xml_escape
 
 import httpx
 import vobject  # type: ignore[import-untyped]
@@ -165,7 +166,7 @@ class CardDavContactAdapter(SyncProvider):
         if not ids:
             return []
 
-        href_elements = "".join(f"<d:href>{href}</d:href>" for href in ids)
+        href_elements = "".join(f"<d:href>{xml_escape(href)}</d:href>" for href in ids)
         body = (
             '<?xml version="1.0" encoding="utf-8"?>'
             '<card:addressbook-multiget xmlns:d="DAV:" '
@@ -217,7 +218,7 @@ class CardDavContactAdapter(SyncProvider):
         body = (
             '<?xml version="1.0" encoding="utf-8"?>'
             '<d:sync-collection xmlns:d="DAV:">'
-            f"<d:sync-token>{cursor}</d:sync-token>"
+            f"<d:sync-token>{xml_escape(cursor)}</d:sync-token>"
             "<d:sync-level>1</d:sync-level>"
             "<d:prop>"
             "<d:getetag/>"
@@ -278,7 +279,8 @@ class CardDavContactAdapter(SyncProvider):
     ) -> str:
         """Create an addressbook collection via extended MKCOL."""
         self._ensure_addressbook_home()
-        assert self._addressbook_home is not None
+        if self._addressbook_home is None:
+            raise RuntimeError("addressbook home discovery failed")
 
         col_href = f"{self._addressbook_home.rstrip('/')}/{name}/"
         body = (
@@ -290,7 +292,7 @@ class CardDavContactAdapter(SyncProvider):
             "<d:collection/>"
             "<card:addressbook/>"
             "</d:resourcetype>"
-            f"<d:displayname>{name}</d:displayname>"
+            f"<d:displayname>{xml_escape(name)}</d:displayname>"
             "</d:prop>"
             "</d:set>"
             "</d:mkcol>"
@@ -359,6 +361,12 @@ class CardDavContactAdapter(SyncProvider):
     def _abs_url(self, path: str) -> str:
         """Resolve a path (possibly relative) to an absolute URL."""
         if path.startswith("http://") or path.startswith("https://"):
+            parsed = urlparse(path)
+            base_parsed = urlparse(self._base_url)
+            if parsed.hostname != base_parsed.hostname:
+                raise ValueError(
+                    f"URL host mismatch: {parsed.hostname} != {base_parsed.hostname}"
+                )
             return path
         return urljoin(self._base_url + "/", path.lstrip("/"))
 

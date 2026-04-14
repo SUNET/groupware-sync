@@ -290,7 +290,8 @@ def refresh_one(uc: UserConfig, p: Provider, now: int) -> bool:
                 )
                 time.sleep(backoff)
 
-    assert new is not None
+    if new is None:
+        raise RuntimeError("token refresh failed after all retry attempts")
     with get_session() as s:
         row = s.get(UserConfig, uc.id)
         if row is not None:

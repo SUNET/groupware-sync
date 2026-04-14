@@ -67,7 +67,8 @@ def _compare_node(
         return result
 
     # Both exist — must both be containers at the top level of recursion
-    assert node_a is not None and node_b is not None
+    if node_a is None or node_b is None:
+        raise RuntimeError("expected both nodes to be non-None at this point")
 
     # --- Look up stored pair ---
     stored_pair = ops.get_pair(

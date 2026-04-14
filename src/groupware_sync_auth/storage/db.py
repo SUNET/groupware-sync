@@ -66,5 +66,6 @@ def _init() -> None:
 
 def get_session() -> Session:
     _init()
-    assert _SessionLocal is not None
+    if _SessionLocal is None:
+        raise RuntimeError("database session factory not initialized")
     return _SessionLocal()

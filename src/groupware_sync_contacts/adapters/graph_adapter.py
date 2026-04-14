@@ -9,8 +9,10 @@ Contact model. This adapter works with SyncItem dicts instead.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -26,7 +28,9 @@ from groupware_sync.provider import SyncProvider
 log = logging.getLogger(__name__)
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+GRAPH_HOST = "graph.microsoft.com"
 TIMEOUT = 30.0
+MAX_429_RETRIES = 3
 
 # Graph address types -> canonical labels
 _ADDR_FIELDS = {
@@ -46,6 +50,33 @@ class GraphContactAdapter(SyncProvider):
             timeout=TIMEOUT,
         )
         self._addressbook_filter = addressbook_filter  # filter by displayName if set
+
+    # -- Internal helpers ------------------------------------------------------
+
+    @staticmethod
+    def _validate_url(url: str) -> bool:
+        """Check that an absolute URL points to graph.microsoft.com."""
+        parsed = urlparse(url)
+        if parsed.hostname != GRAPH_HOST:
+            log.warning("rejecting URL with unexpected host: %s", parsed.hostname)
+            return False
+        return True
+
+    def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """HTTP request with 429 rate-limit retry and Retry-After backoff."""
+        for attempt in range(MAX_429_RETRIES + 1):
+            resp = self._client.request(method, url, **kwargs)
+            if resp.status_code != 429 or attempt == MAX_429_RETRIES:
+                return resp
+            retry_after = int(resp.headers.get("Retry-After", "5"))
+            log.warning(
+                "graph 429 rate-limited, retrying in %ds (attempt %d/%d)",
+                retry_after,
+                attempt + 1,
+                MAX_429_RETRIES,
+            )
+            time.sleep(retry_after)
+        return resp  # unreachable, but keeps mypy happy
 
     # -- SyncProvider interface ------------------------------------------------
 
@@ -73,7 +104,7 @@ class GraphContactAdapter(SyncProvider):
         # 1. Fetch the default contacts folder (not returned by /contactFolders)
         folders: list[dict[str, str]] = []
         try:
-            r = self._client.get("/me/contactFolders/Contacts")
+            r = self._request("GET", "/me/contactFolders/Contacts")
             r.raise_for_status()
             default = r.json()
             folders.append({
@@ -86,7 +117,7 @@ class GraphContactAdapter(SyncProvider):
         # 2. List user-created contact folders (paginated)
         url: Optional[str] = "/me/contactFolders"
         while url:
-            r = self._client.get(url)
+            r = self._request("GET", url)
             r.raise_for_status()
             data = r.json()
             for item in data.get("value", []):
@@ -97,7 +128,8 @@ class GraphContactAdapter(SyncProvider):
                     "id": item["id"],
                     "name": item.get("displayName", "Contacts"),
                 })
-            url = data.get("@odata.nextLink")
+            next_link = data.get("@odata.nextLink")
+            url = next_link if next_link and self._validate_url(next_link) else None
 
         # Filter to specified addressbook if configured
         if self._addressbook_filter:
@@ -124,7 +156,7 @@ class GraphContactAdapter(SyncProvider):
                 f"?$select=id,lastModifiedDateTime&$top=100"
             )
             while contacts_url:
-                r = self._client.get(contacts_url)
+                r = self._request("GET", contacts_url)
                 r.raise_for_status()
                 data = r.json()
                 for contact in data.get("value", []):
@@ -136,7 +168,8 @@ class GraphContactAdapter(SyncProvider):
                         item_type=ItemType.CONTACT,
                     )
                     folder_node.children.append(leaf)
-                contacts_url = data.get("@odata.nextLink")
+                next_link = data.get("@odata.nextLink")
+                contacts_url = next_link if next_link and self._validate_url(next_link) else None
 
             root.children.append(folder_node)
 
@@ -151,7 +184,7 @@ class GraphContactAdapter(SyncProvider):
         items: list[SyncItem] = []
         for cid in ids:
             try:
-                r = self._client.get(f"/me/contacts/{cid}")
+                r = self._request("GET", f"/me/contacts/{cid}")
                 if r.status_code == 404:
                     log.warning("graph contact %s not found, skipping", cid)
                     continue
@@ -159,7 +192,7 @@ class GraphContactAdapter(SyncProvider):
                 item = _graph_to_sync_item(r.json())
                 # Fetch photo separately (stored outside the contact JSON)
                 try:
-                    photo_resp = self._client.get(f"/me/contacts/{cid}/photo/$value")
+                    photo_resp = self._request("GET", f"/me/contacts/{cid}/photo/$value")
                     if photo_resp.status_code == 200:
                         import base64
                         item.fields["photo"] = base64.b64encode(photo_resp.content).decode("ascii")
@@ -185,9 +218,14 @@ class GraphContactAdapter(SyncProvider):
         url: Optional[str] = cursor  # cursor IS the deltaLink
         new_cursor = cursor
 
+        # Validate the initial deltaLink URL
+        if url and url.startswith("http") and not self._validate_url(url):
+            log.warning("delta link has unexpected host, falling back to full fetch")
+            return None
+
         try:
             while url:
-                r = self._client.get(url)
+                r = self._request("GET", url)
                 if r.status_code == 410:
                     log.info("graph delta link expired, falling back to full fetch")
                     return None
@@ -202,10 +240,16 @@ class GraphContactAdapter(SyncProvider):
                         # we treat all non-removed as updated. The sync engine
                         # checks the mapping to decide if it's truly new.
                         updated.append(cid)
-                url = data.get("@odata.nextLink")
-                if not url:
+                next_link = data.get("@odata.nextLink")
+                if next_link and self._validate_url(next_link):
+                    url = next_link
+                else:
                     url = None
-                    new_cursor = data.get("@odata.deltaLink", cursor)
+                    delta_link = data.get("@odata.deltaLink")
+                    if delta_link and self._validate_url(delta_link):
+                        new_cursor = delta_link
+                    else:
+                        new_cursor = cursor
         except httpx.HTTPStatusError:
             log.warning("graph delta query failed, falling back to full fetch")
             return None
@@ -221,20 +265,20 @@ class GraphContactAdapter(SyncProvider):
         self, name: str, parent_id: Optional[str] = None
     ) -> str:
         """Create a contact folder, return its provider ID."""
-        r = self._client.post("/me/contactFolders", json={"displayName": name})
+        r = self._request("POST", "/me/contactFolders", json={"displayName": name})
         r.raise_for_status()
         return r.json()["id"]
 
     def delete_container(self, container_id: str) -> None:
         """Delete a contact folder."""
-        r = self._client.delete(f"/me/contactFolders/{container_id}")
+        r = self._request("DELETE", f"/me/contactFolders/{container_id}")
         r.raise_for_status()
 
     def create_item(self, container_id: str, item: SyncItem) -> tuple[str, str]:
         """Create a contact. Returns (new_id, server_fingerprint)."""
         body = _sync_item_to_graph(item)
-        r = self._client.post(
-            f"/me/contactFolders/{container_id}/contacts", json=body
+        r = self._request(
+            "POST", f"/me/contactFolders/{container_id}/contacts", json=body
         )
         r.raise_for_status()
         data = r.json()
@@ -245,7 +289,8 @@ class GraphContactAdapter(SyncProvider):
             photo_bytes = base64.b64decode(item.fields["photo"])
             content_type = item.fields.get("photo_type", "image/jpeg")
             try:
-                self._client.put(
+                self._request(
+                    "PUT",
                     f"/me/contacts/{contact_id}/photo/$value",
                     content=photo_bytes,
                     headers={"Content-Type": content_type},
@@ -257,7 +302,7 @@ class GraphContactAdapter(SyncProvider):
     def update_item(self, container_id: str, item: SyncItem) -> str:
         """Update an existing contact. Returns server-assigned fingerprint."""
         body = _sync_item_to_graph(item)
-        r = self._client.patch(f"/me/contacts/{item.provider_id}", json=body)
+        r = self._request("PATCH", f"/me/contacts/{item.provider_id}", json=body)
         r.raise_for_status()
         # Upload photo if present
         if item.fields.get("photo"):
@@ -265,7 +310,8 @@ class GraphContactAdapter(SyncProvider):
             photo_bytes = base64.b64decode(item.fields["photo"])
             content_type = item.fields.get("photo_type", "image/jpeg")
             try:
-                self._client.put(
+                self._request(
+                    "PUT",
                     f"/me/contacts/{item.provider_id}/photo/$value",
                     content=photo_bytes,
                     headers={"Content-Type": content_type},
@@ -276,7 +322,7 @@ class GraphContactAdapter(SyncProvider):
 
     def delete_item(self, container_id: str, item_id: str) -> None:
         """Delete a contact. Silently ignores 404 (already gone)."""
-        r = self._client.delete(f"/me/contacts/{item_id}")
+        r = self._request("DELETE", f"/me/contacts/{item_id}")
         if r.status_code == 404:
             log.info("graph contact %s already deleted", item_id)
             return

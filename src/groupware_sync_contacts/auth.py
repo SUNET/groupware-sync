@@ -29,6 +29,5 @@ def get_access_token(database_url: str, uid: str, provider_name: str) -> str:
     if row is None:
         raise ValueError(
             f"no access token for uid={uid!r} provider={provider_name!r}"
-            f" in {database_url}"
         )
     return row[0]
