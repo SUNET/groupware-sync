@@ -284,8 +284,8 @@ class JmapContactAdapter(SyncProvider):
                         not_destroyed[container_id],
                     )
 
-    def create_item(self, container_id: str, item: SyncItem) -> str:
-        """Create a contact card, return its provider ID."""
+    def create_item(self, container_id: str, item: SyncItem) -> tuple[str, str]:
+        """Create a contact card. Returns (new_id, server_fingerprint)."""
         self._ensure_session()
         card = _sync_item_to_jmap(item)
         card["addressBookIds"] = {container_id: True}
@@ -303,11 +303,14 @@ class JmapContactAdapter(SyncProvider):
             if result[0] == "ContactCard/set":
                 created = result[1].get("created", {})
                 new_item = created.get("new1", {})
-                return new_item["id"]
+                new_id = new_item["id"]
+                # Server returns the updated timestamp in the created object
+                fingerprint = new_item.get("updated", "")
+                return new_id, fingerprint
         raise ValueError("JMAP create contact failed")
 
-    def update_item(self, container_id: str, item: SyncItem) -> None:
-        """Update an existing contact card."""
+    def update_item(self, container_id: str, item: SyncItem) -> str:
+        """Update an existing contact card. Returns server-assigned fingerprint."""
         self._ensure_session()
         card = _sync_item_to_jmap(item)
         results = self._call([
@@ -329,6 +332,30 @@ class JmapContactAdapter(SyncProvider):
                         item.provider_id,
                         not_updated[item.provider_id],
                     )
+        # Fetch the new fingerprint — JMAP set doesn't always return
+        # per-item updated timestamps in the update response
+        fp = self._get_item_fingerprint(item.provider_id)
+        return fp
+
+    def _get_item_fingerprint(self, item_id: str) -> str:
+        """Fetch just the updated timestamp for a single item."""
+        results = self._call([
+            [
+                "ContactCard/get",
+                {
+                    "accountId": self._account_id,
+                    "ids": [item_id],
+                    "properties": ["id", "updated"],
+                },
+                "fp0",
+            ],
+        ])
+        for result in results:
+            if result[0] == "ContactCard/get":
+                for card in result[1].get("list", []):
+                    if card["id"] == item_id:
+                        return card.get("updated", "")
+        return ""
 
     def delete_item(self, container_id: str, item_id: str) -> None:
         """Delete a contact card."""

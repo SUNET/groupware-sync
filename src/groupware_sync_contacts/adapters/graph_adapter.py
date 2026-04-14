@@ -191,20 +191,22 @@ class GraphContactAdapter(SyncProvider):
         r = self._client.delete(f"/me/contactFolders/{container_id}")
         r.raise_for_status()
 
-    def create_item(self, container_id: str, item: SyncItem) -> str:
-        """Create a contact in the given folder, return its provider ID."""
+    def create_item(self, container_id: str, item: SyncItem) -> tuple[str, str]:
+        """Create a contact. Returns (new_id, server_fingerprint)."""
         body = _sync_item_to_graph(item)
         r = self._client.post(
             f"/me/contactFolders/{container_id}/contacts", json=body
         )
         r.raise_for_status()
-        return r.json()["id"]
+        data = r.json()
+        return data["id"], data.get("lastModifiedDateTime", "")
 
-    def update_item(self, container_id: str, item: SyncItem) -> None:
-        """Update an existing contact."""
+    def update_item(self, container_id: str, item: SyncItem) -> str:
+        """Update an existing contact. Returns server-assigned fingerprint."""
         body = _sync_item_to_graph(item)
         r = self._client.patch(f"/me/contacts/{item.provider_id}", json=body)
         r.raise_for_status()
+        return r.json().get("lastModifiedDateTime", "")
 
     def delete_item(self, container_id: str, item_id: str) -> None:
         """Delete a contact. Silently ignores 404 (already gone)."""

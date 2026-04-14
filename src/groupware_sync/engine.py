@@ -363,12 +363,15 @@ def _merge_one(
     )
     summary.conflicts += conflict_count
 
-    # Push updates to sides that changed
+    # Push updates to sides that changed, capturing server-assigned fingerprints
+    new_fp_a = item_a.fingerprint  # default: keep the fetched fingerprint
+    new_fp_b = item_b.fingerprint
+
     if changed_vs_a and cid_a:
         merged_for_a = dataclasses.replace(merged, provider_id=a_id)
         try:
-            provider_a.update_item(cid_a, merged_for_a)
-            log.debug("Updated item %s on %s", a_id, provider_a.name)
+            new_fp_a = provider_a.update_item(cid_a, merged_for_a)
+            log.debug("Updated item %s on %s (fp=%s)", a_id, provider_a.name, new_fp_a)
         except Exception:
             log.exception("Failed to update %s on %s", a_id, provider_a.name)
             summary.errors += 1
@@ -376,18 +379,18 @@ def _merge_one(
     if changed_vs_b and cid_b:
         merged_for_b = dataclasses.replace(merged, provider_id=b_id)
         try:
-            provider_b.update_item(cid_b, merged_for_b)
-            log.debug("Updated item %s on %s", b_id, provider_b.name)
+            new_fp_b = provider_b.update_item(cid_b, merged_for_b)
+            log.debug("Updated item %s on %s (fp=%s)", b_id, provider_b.name, new_fp_b)
         except Exception:
             log.exception("Failed to update %s on %s", b_id, provider_b.name)
             summary.errors += 1
 
-    # Update stored fingerprints and snapshot
+    # Store server-assigned fingerprints (not the pre-write ones)
     ops.update_fingerprints(
         session,
         mapping,
-        fingerprint_a=item_a.fingerprint,
-        fingerprint_b=item_b.fingerprint,
+        fingerprint_a=new_fp_a,
+        fingerprint_b=new_fp_b,
     )
     ops.save_snapshot(session, mapping.id, merged)
 
@@ -496,11 +499,14 @@ def _execute_creates(
         )
         summary.conflicts += conflict_count
 
-        # Push updates if needed
+        # Push updates if needed, capturing server fingerprints
+        new_fp_a = item_a.fingerprint
+        new_fp_b = item_b.fingerprint
+
         if changed_vs_a and op_a.container_id_a:
             merged_for_a = dataclasses.replace(merged, provider_id=a_id)
             try:
-                provider_a.update_item(op_a.container_id_a, merged_for_a)
+                new_fp_a = provider_a.update_item(op_a.container_id_a, merged_for_a)
             except Exception:
                 log.exception("Failed to update matched %s on %s", a_id, provider_a.name)
                 summary.errors += 1
@@ -508,12 +514,12 @@ def _execute_creates(
         if changed_vs_b and op_b.container_id_b:
             merged_for_b = dataclasses.replace(merged, provider_id=b_id)
             try:
-                provider_b.update_item(op_b.container_id_b, merged_for_b)
+                new_fp_b = provider_b.update_item(op_b.container_id_b, merged_for_b)
             except Exception:
                 log.exception("Failed to update matched %s on %s", b_id, provider_b.name)
                 summary.errors += 1
 
-        # Create mapping + snapshot
+        # Create mapping + snapshot with server-assigned fingerprints
         pair = ops.get_or_create_pair(
             session,
             item_type.value,
@@ -528,8 +534,8 @@ def _execute_creates(
             pair.id,
             a_id,
             b_id,
-            fingerprint_a=item_a.fingerprint,
-            fingerprint_b=item_b.fingerprint,
+            fingerprint_a=new_fp_a,
+            fingerprint_b=new_fp_b,
         )
         ops.save_snapshot(session, mapping.id, merged)
         summary.updated += 1
@@ -545,14 +551,14 @@ def _execute_creates(
             continue
 
         try:
-            new_b_id = provider_b.create_item(cid_b, item_a)
-            log.info("Created item %s on %s -> %s", a_id, provider_b.name, new_b_id)
+            new_b_id, new_b_fp = provider_b.create_item(cid_b, item_a)
+            log.info("Created item %s on %s -> %s (fp=%s)", a_id, provider_b.name, new_b_id, new_b_fp)
         except Exception:
             log.exception("Failed to create %s on %s", a_id, provider_b.name)
             summary.errors += 1
             continue
 
-        # Create mapping + snapshot
+        # Create mapping + snapshot with server-assigned fingerprints
         pair = ops.get_or_create_pair(
             session,
             item_type.value,
@@ -568,6 +574,7 @@ def _execute_creates(
             a_id,
             new_b_id,
             fingerprint_a=item_a.fingerprint,
+            fingerprint_b=new_b_fp,
         )
         ops.save_snapshot(session, mapping.id, item_a)
         summary.created += 1
@@ -582,14 +589,14 @@ def _execute_creates(
             continue
 
         try:
-            new_a_id = provider_a.create_item(cid_a, item_b)
-            log.info("Created item %s on %s -> %s", b_id, provider_a.name, new_a_id)
+            new_a_id, new_a_fp = provider_a.create_item(cid_a, item_b)
+            log.info("Created item %s on %s -> %s (fp=%s)", b_id, provider_a.name, new_a_id, new_a_fp)
         except Exception:
             log.exception("Failed to create %s on %s", b_id, provider_a.name)
             summary.errors += 1
             continue
 
-        # Create mapping + snapshot
+        # Create mapping + snapshot with server-assigned fingerprints
         pair = ops.get_or_create_pair(
             session,
             item_type.value,
@@ -604,6 +611,7 @@ def _execute_creates(
             pair.id,
             new_a_id,
             b_id,
+            fingerprint_a=new_a_fp,
             fingerprint_b=item_b.fingerprint,
         )
         ops.save_snapshot(session, mapping.id, item_b)

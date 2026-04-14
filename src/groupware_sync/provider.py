@@ -65,13 +65,21 @@ class SyncProvider(ABC):
         ...
 
     @abstractmethod
-    def create_item(self, container_id: str, item: SyncItem) -> str:
-        """Create an item, return its provider ID."""
+    def create_item(self, container_id: str, item: SyncItem) -> tuple[str, str]:
+        """Create an item. Returns (new_provider_id, server_fingerprint).
+
+        The fingerprint is whatever the server assigned (timestamp, etag,
+        modseq) — captured from the write response so we can store the
+        exact value the server will report on the next read.
+        """
         ...
 
     @abstractmethod
-    def update_item(self, container_id: str, item: SyncItem) -> None:
-        """Update an existing item. item.provider_id identifies which."""
+    def update_item(self, container_id: str, item: SyncItem) -> str:
+        """Update an existing item. item.provider_id identifies which.
+
+        Returns the server-assigned fingerprint from the write response.
+        """
         ...
 
     @abstractmethod
