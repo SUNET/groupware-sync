@@ -17,6 +17,10 @@ dependencies = [
 [project.scripts]
 groupware-sync-auth = "groupware_sync_auth.cli:app"
 groupware-sync-contacts = "groupware_sync_contacts.cli:app"
+groupware-sync = "groupware_sync.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/groupware_sync_auth", "src/groupware_sync_contacts"]
+packages = ["src/groupware_sync_auth", "src/groupware_sync_contacts", "src/groupware_sync"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
