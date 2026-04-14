@@ -12,6 +12,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "keyring>=24",
     "typer>=0.12",
+    "vobject>=0.9.7",
 ]
 
 [project.scripts]
