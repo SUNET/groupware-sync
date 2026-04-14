@@ -197,32 +197,38 @@ def _compare_node(
                         target_side="both",
                         node_id=a_id,
                         paired_node_id=b_id,
+                        container_id_a=node_a.node_id,
+                        container_id_b=node_b.node_id,
                         item_type=item_type,
                     )
                 )
         elif leaf_a is not None and leaf_b is None:
-            # Gone from B — propagate deletion to B (engine removes stale ref)
+            # Gone from B → delete on A (propagate B's deletion)
             mapped_a_ids.add(a_id)
             mapped_b_ids.add(b_id)
             result.append(
                 SyncOp(
                     op_type=OpType.DELETE_ITEM,
-                    target_side="b",
-                    node_id=a_id,
-                    paired_node_id=b_id,
+                    target_side="a",
+                    node_id=a_id,          # target item (on A)
+                    paired_node_id=b_id,   # was on B
+                    container_id_a=node_a.node_id,
+                    container_id_b=node_b.node_id,
                     item_type=item_type,
                 )
             )
         elif leaf_b is not None and leaf_a is None:
-            # Gone from A — propagate deletion to B
+            # Gone from A → delete on B (propagate A's deletion)
             mapped_a_ids.add(a_id)
             mapped_b_ids.add(b_id)
             result.append(
                 SyncOp(
                     op_type=OpType.DELETE_ITEM,
                     target_side="b",
-                    node_id=b_id,
-                    paired_node_id=a_id,
+                    node_id=b_id,          # target item (on B)
+                    paired_node_id=a_id,   # was on A
+                    container_id_a=node_a.node_id,
+                    container_id_b=node_b.node_id,
                     item_type=item_type,
                 )
             )
@@ -236,6 +242,8 @@ def _compare_node(
                     target_side="both",
                     node_id=a_id,
                     paired_node_id=b_id,
+                    container_id_a=node_a.node_id,
+                    container_id_b=node_b.node_id,
                     item_type=item_type,
                 )
             )

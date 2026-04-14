@@ -641,14 +641,15 @@ def _execute_delete(
         summary.deleted += 1
         return
 
-    # Determine which provider to delete from and the container ID
+    # Determine which provider to delete from and the container ID.
+    # node_id is the target item ID (set by tree.py to the correct side).
     if op.target_side == "b":
         target = provider_b
-        item_id = op.paired_node_id or op.node_id
+        item_id = op.node_id
         cid = op.container_id_b
     else:
         target = provider_a
-        item_id = op.paired_node_id or op.node_id
+        item_id = op.node_id
         cid = op.container_id_a
 
     if not cid:
