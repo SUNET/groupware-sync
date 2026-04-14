@@ -435,15 +435,28 @@ class JmapContactAdapter(SyncProvider):
         )
 
     def _call(self, method_calls: list[list[Any]]) -> list[list[Any]]:
-        """POST a JMAP request and return methodResponses."""
+        """POST a JMAP request and return methodResponses.
+
+        Retries on 429 Too Many Requests with exponential backoff.
+        """
+        import time as _time
+
         self._ensure_session()
         body = {
             "using": USING,
             "methodCalls": method_calls,
         }
-        r = self._client.post(self._api_url, json=body)  # type: ignore[arg-type]
-        r.raise_for_status()
-        return r.json()["methodResponses"]
+        for attempt in range(4):
+            r = self._client.post(self._api_url, json=body)  # type: ignore[arg-type]
+            if r.status_code == 429:
+                retry_after = int(r.headers.get("retry-after", 2 ** attempt))
+                log.warning("JMAP 429 — retrying in %ds (attempt %d)", retry_after, attempt + 1)
+                _time.sleep(retry_after)
+                continue
+            r.raise_for_status()
+            return r.json()["methodResponses"]
+        r.raise_for_status()  # raise on final attempt
+        return []  # unreachable
 
 
 # -- JSContact <-> SyncItem translation ----------------------------------------
@@ -702,9 +715,12 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
             org["units"] = [{"name": fields["department"]}]
         card["organizations"] = {"o0": org}
 
-    # Website
-    if fields.get("website") is not None:
-        card["online"] = {"w0": {"resource": fields["website"]}}
+    # Website — NOTE: Stalwart does not support the JSContact "online" property.
+    # We skip writing it to avoid invalidProperties errors. The website field
+    # will still sync correctly between Graph and CardDAV; it just won't be
+    # stored in Stalwart's JMAP contacts.
+    # if fields.get("website") is not None:
+    #     card["online"] = {"w0": {"resource": fields["website"]}}
 
     # Job title
     if fields.get("job_title") is not None:
