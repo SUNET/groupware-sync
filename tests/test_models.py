@@ -7,15 +7,24 @@ from groupware_sync.models import (
 )
 
 
-def test_merkle_leaf_uses_fingerprint():
+def test_merkle_leaf_is_hash_of_id_and_fingerprint():
     leaf = SyncNode("a", "a", NodeType.LEAF, fingerprint="fp1")
-    assert leaf.compute_merkle() == "fp1"
-    assert leaf.merkle_hash == "fp1"
+    h = leaf.compute_merkle()
+    assert len(h) == 16  # sha256 hex truncated to 16 chars
+    assert h != "fp1"    # it's a proper hash, not the raw fingerprint
+
+
+def test_merkle_leaf_includes_id():
+    """Two leaves with same fingerprint but different IDs produce different hashes."""
+    leaf1 = SyncNode("id1", "a", NodeType.LEAF, fingerprint="same_fp")
+    leaf2 = SyncNode("id2", "b", NodeType.LEAF, fingerprint="same_fp")
+    assert leaf1.compute_merkle() != leaf2.compute_merkle()
 
 
 def test_merkle_leaf_empty_fingerprint():
     leaf = SyncNode("a", "a", NodeType.LEAF, fingerprint=None)
-    assert leaf.compute_merkle() == ""
+    h = leaf.compute_merkle()
+    assert len(h) == 16  # still a proper hash
 
 
 def test_merkle_container_from_children():
@@ -25,9 +34,9 @@ def test_merkle_container_from_children():
     ])
     h = root.compute_merkle()
     assert h is not None
-    assert len(h) == 16  # sha256 hex truncated to 16 chars
-    assert root.children[0].merkle_hash == "fp1"
-    assert root.children[1].merkle_hash == "fp2"
+    assert len(h) == 16
+    assert len(root.children[0].merkle_hash) == 16  # children are also proper hashes
+    assert len(root.children[1].merkle_hash) == 16
 
 
 def test_merkle_is_deterministic():

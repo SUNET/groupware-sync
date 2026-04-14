@@ -54,9 +54,16 @@ class SyncNode:
     children: list[SyncNode] = field(default_factory=list)
 
     def compute_merkle(self) -> str:
-        """Compute Merkle hash bottom-up from children's fingerprints."""
+        """Compute Merkle hash bottom-up.
+
+        Leaves: sha256(node_id | fingerprint) — includes the ID so two
+        different items with the same timestamp produce different hashes.
+        Containers: sha256(sorted child merkle hashes).
+        Every level is a proper hash.
+        """
         if self.node_type == NodeType.LEAF:
-            self.merkle_hash = self.fingerprint or ""
+            raw = f"{self.node_id}|{self.fingerprint or ''}"
+            self.merkle_hash = hashlib.sha256(raw.encode()).hexdigest()[:16]
             return self.merkle_hash
         child_hashes = sorted(c.compute_merkle() for c in self.children)
         raw = "|".join(child_hashes)
