@@ -69,14 +69,29 @@ class GraphContactAdapter(SyncProvider):
             node_type=NodeType.CONTAINER,
         )
 
-        # 1. List all contact folders (paginated)
+        # 1. Fetch the default contacts folder (not returned by /contactFolders)
         folders: list[dict[str, str]] = []
+        try:
+            r = self._client.get("/me/contactFolders/Contacts")
+            r.raise_for_status()
+            default = r.json()
+            folders.append({
+                "id": default["id"],
+                "name": default.get("displayName", "Contacts"),
+            })
+        except Exception:
+            log.warning("could not fetch default contacts folder, trying /me/contactFolders only")
+
+        # 2. List user-created contact folders (paginated)
         url: Optional[str] = "/me/contactFolders"
         while url:
             r = self._client.get(url)
             r.raise_for_status()
             data = r.json()
             for item in data.get("value", []):
+                # Skip the default folder if we already have it
+                if any(f["id"] == item["id"] for f in folders):
+                    continue
                 folders.append({
                     "id": item["id"],
                     "name": item.get("displayName", "Contacts"),
