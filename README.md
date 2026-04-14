@@ -2,12 +2,12 @@
 
 Two-way contacts sync between Stalwart (JMAP), Microsoft 365 (Graph API), and
 CardDAV servers (Radicale, etc.) — built on a generic tree-based sync framework
-with Merkle-tree change detection and field-level merge.
+with Merkle-style subtree hashing for change detection and field-level merge.
 
 ## What it does
 
 - Syncs contacts bidirectionally between any pair of supported backends
-- Detects changes efficiently using Merkle hashes (skip unchanged subtrees)
+- Detects changes efficiently using Merkle-style subtree hashes (skip unchanged subtrees)
 - Merges field-level edits from both sides (last-write-wins for conflicts)
 - Identity-matches contacts by email address on first sync
 - Supports 18 contact fields: name, email, phone, address, organization,
@@ -30,9 +30,11 @@ Three packages in one repo:
 - **`groupware_sync_auth`** — OAuth 2.0 token management (device code flow)
 
 The sync framework represents each endpoint's data as a tree of nodes with
-fingerprints. A recursive three-way Merkle comparison (tree A, tree B, stored
-state) produces a minimal set of sync operations. Field-level merge uses
-configurable strategies per field (SCALAR, SET, or IMMUTABLE).
+fingerprints. Subtree hashes (Merkle-style, used for pruning — not
+cryptographic commitments or proof paths) allow the engine to skip unchanged
+branches. A recursive three-way comparison (tree A, tree B, stored state)
+produces a minimal set of sync operations. Field-level merge uses configurable
+strategies per field (SCALAR, SET, or IMMUTABLE).
 
 ## Install
 

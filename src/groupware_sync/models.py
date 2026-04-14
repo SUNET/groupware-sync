@@ -56,10 +56,12 @@ class SyncNode:
     skipped: bool = False  # True if children were not fetched (state unchanged)
 
     def compute_merkle(self) -> str:
-        """Compute Merkle hash bottom-up.
+        """Compute subtree hash bottom-up.
 
         Leaves: sha256(node_id | fingerprint).
-        Containers: sha256(sorted child merkle hashes).
+        Containers: sha256(node_id | sorted child hashes) — includes the
+        container's own identity so two containers with the same children
+        but different IDs produce different hashes.
         Skipped containers: keep their pre-set merkle_hash (carried from
         stored state — children were not fetched because the protocol's
         state indicator showed nothing changed).
@@ -71,7 +73,7 @@ class SyncNode:
         if self.skipped and self.merkle_hash is not None:
             return self.merkle_hash
         child_hashes = sorted(c.compute_merkle() for c in self.children)
-        raw = "|".join(child_hashes)
+        raw = f"{self.node_id}|{'|'.join(child_hashes)}"
         self.merkle_hash = hashlib.sha256(raw.encode()).hexdigest()[:16]
         return self.merkle_hash
 
