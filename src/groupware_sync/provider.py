@@ -21,10 +21,20 @@ class SyncProvider(ABC):
         ...
 
     @abstractmethod
-    def build_tree(self, item_type: ItemType) -> SyncNode:
+    def build_tree(
+        self,
+        item_type: ItemType,
+        known_states: Optional[dict[str, tuple[str, str]]] = None,
+    ) -> SyncNode:
         """Build a tree of containers and leaf metadata (IDs + fingerprints).
 
         Does NOT fetch full item data — only IDs and fingerprints.
+
+        known_states: optional dict of container_id → (state_cursor, merkle_hash).
+        If the protocol supports a state indicator and it matches the stored
+        cursor for a container, the adapter SHOULD return that container with
+        skipped=True and merkle_hash pre-set from the stored value, skipping
+        the child fetch entirely.
         """
         ...
 

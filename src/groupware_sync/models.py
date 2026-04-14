@@ -52,18 +52,23 @@ class SyncNode:
     merkle_hash: Optional[str] = None
     item_type: Optional[ItemType] = None
     children: list[SyncNode] = field(default_factory=list)
+    state_cursor: Optional[str] = None  # protocol's state indicator for this container
+    skipped: bool = False  # True if children were not fetched (state unchanged)
 
     def compute_merkle(self) -> str:
         """Compute Merkle hash bottom-up.
 
-        Leaves: sha256(node_id | fingerprint) — includes the ID so two
-        different items with the same timestamp produce different hashes.
+        Leaves: sha256(node_id | fingerprint).
         Containers: sha256(sorted child merkle hashes).
-        Every level is a proper hash.
+        Skipped containers: keep their pre-set merkle_hash (carried from
+        stored state — children were not fetched because the protocol's
+        state indicator showed nothing changed).
         """
         if self.node_type == NodeType.LEAF:
             raw = f"{self.node_id}|{self.fingerprint or ''}"
             self.merkle_hash = hashlib.sha256(raw.encode()).hexdigest()[:16]
+            return self.merkle_hash
+        if self.skipped and self.merkle_hash is not None:
             return self.merkle_hash
         child_hashes = sorted(c.compute_merkle() for c in self.children)
         raw = "|".join(child_hashes)

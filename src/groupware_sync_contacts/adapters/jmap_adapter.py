@@ -48,15 +48,22 @@ class JmapContactAdapter(SyncProvider):
     def name(self) -> str:
         return "stalwart"
 
-    def build_tree(self, item_type: ItemType) -> SyncNode:
+    def build_tree(
+        self,
+        item_type: ItemType,
+        known_states: Optional[dict[str, tuple[str, str]]] = None,
+    ) -> SyncNode:
         """Build a container/leaf tree for all addressbooks and contacts.
 
         Only fetches IDs and fingerprints (the ``updated`` timestamp), not full
-        contact data.
+        contact data. If known_states provides a stored JMAP state for an
+        addressbook that matches the current server state, that addressbook's
+        children are skipped entirely.
         """
         self._ensure_session()
+        if known_states is None:
+            known_states = {}
 
-        # Root container
         root = SyncNode(
             node_id="root",
             name="root",
@@ -76,13 +83,40 @@ class JmapContactAdapter(SyncProvider):
                         "name": item.get("name", "Default"),
                     })
 
-        # 2. For each addressbook, query contact IDs and fetch fingerprints
+        # 2. For each addressbook, check if we can skip it
         for ab in addressbooks:
+            ab_id = ab["id"]
+            stored = known_states.get(ab_id)
+
+            if stored is not None:
+                stored_cursor, stored_merkle = stored
+                # Ask JMAP if state changed since stored_cursor
+                current_state = self._get_contacts_state()
+                if current_state and current_state == stored_cursor:
+                    # State unchanged — skip this addressbook entirely
+                    log.debug("skipping addressbook %s (state unchanged: %s)", ab["name"], current_state)
+                    ab_node = SyncNode(
+                        node_id=ab_id,
+                        name=ab["name"],
+                        node_type=NodeType.CONTAINER,
+                        merkle_hash=stored_merkle,
+                        state_cursor=current_state,
+                        skipped=True,
+                    )
+                    root.children.append(ab_node)
+                    continue
+
+            # State changed or no stored state — fetch children
             ab_node = SyncNode(
-                node_id=ab["id"],
+                node_id=ab_id,
                 name=ab["name"],
                 node_type=NodeType.CONTAINER,
             )
+
+            # Get current JMAP state for this type (to store for next sync)
+            current_state = self._get_contacts_state()
+            if current_state:
+                ab_node.state_cursor = current_state
 
             # Query contact IDs in this addressbook
             query_results = self._call([
@@ -90,7 +124,7 @@ class JmapContactAdapter(SyncProvider):
                     "ContactCard/query",
                     {
                         "accountId": self._account_id,
-                        "filter": {"inAddressBook": ab["id"]},
+                        "filter": {"inAddressBook": ab_id},
                     },
                     "q0",
                 ],
@@ -129,6 +163,20 @@ class JmapContactAdapter(SyncProvider):
 
         root.compute_merkle()
         return root
+
+    def _get_contacts_state(self) -> Optional[str]:
+        """Get the current JMAP state for ContactCard."""
+        results = self._call([
+            [
+                "ContactCard/get",
+                {"accountId": self._account_id, "ids": []},
+                "s0",
+            ],
+        ])
+        for result in results:
+            if result[0] == "ContactCard/get":
+                return result[1].get("state")
+        return None
 
     def get_items(self, container_id: str, ids: list[str]) -> list[SyncItem]:
         """Fetch full contact data for the given IDs."""

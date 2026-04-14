@@ -53,17 +53,24 @@ def sync_trees(
     """
     summary = SyncSummary()
 
-    # Phase 1 — Build trees
+    # Phase 0 — Load known states for tree-build optimization
+    # Each entry: container_id → (state_cursor, merkle_hash)
+    # Adapters use the cursor to check if the container changed.
+    # If unchanged, they set skipped=True and merkle_hash from stored.
+    known_a = ops.get_known_states(session, provider_a.name)
+    known_b = ops.get_known_states(session, provider_b.name)
+
+    # Phase 1 — Build trees (adapters may skip unchanged containers)
     log.info("Phase 1: building trees from %s and %s", provider_a.name, provider_b.name)
     try:
-        tree_a = provider_a.build_tree(item_type)
+        tree_a = provider_a.build_tree(item_type, known_states=known_a)
     except Exception:
         log.exception("Failed to build tree from %s", provider_a.name)
         summary.errors += 1
         return summary
 
     try:
-        tree_b = provider_b.build_tree(item_type)
+        tree_b = provider_b.build_tree(item_type, known_states=known_b)
     except Exception:
         log.exception("Failed to build tree from %s", provider_b.name)
         summary.errors += 1
@@ -86,6 +93,10 @@ def sync_trees(
     _execute_ops(
         operations, provider_a, provider_b, item_type, type_spec, session, summary
     )
+
+    # Phase 5 — Persist state cursors from tree nodes
+    _save_tree_cursors(tree_a, provider_a.name, provider_b.name, session)
+    _save_tree_cursors(tree_b, provider_b.name, provider_a.name, session)
 
     session.commit()
     log.info(
@@ -748,3 +759,40 @@ def _identity_key_text(value: object) -> str:
     if isinstance(value, dict):
         return str(value.get("value", ""))
     return str(value)
+
+
+# ---------------------------------------------------------------------------
+# State cursor persistence
+# ---------------------------------------------------------------------------
+
+
+def _save_tree_cursors(
+    tree: SyncNode,
+    this_provider: str,
+    other_provider: str,
+    session: Session,
+) -> None:
+    """Walk the tree and save state_cursor values for containers.
+
+    Adapters set state_cursor on container nodes during build_tree (e.g.,
+    JMAP's per-type state string). We persist these so the next build_tree
+    can use them to skip unchanged containers.
+    """
+    from groupware_sync.models import NodeType
+
+    if tree.node_type != NodeType.CONTAINER:
+        return
+    for child in tree.children:
+        if child.node_type == NodeType.CONTAINER and child.state_cursor:
+            # Find the pair for this container
+            pair = ops.get_pair(
+                session, this_provider, child.node_id, other_provider, "",
+            )
+            if pair is None:
+                # Try reverse
+                pair = ops.get_pair(
+                    session, other_provider, "", this_provider, child.node_id,
+                )
+            if pair is not None:
+                ops.save_cursor(session, pair.id, this_provider, child.state_cursor)
+        _save_tree_cursors(child, this_provider, other_provider, session)

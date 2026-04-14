@@ -197,3 +197,26 @@ def save_cursor(s: Session, pair_id: int, provider: str, cursor: str) -> SyncCur
         row.cursor = cursor
     s.flush()
     return row
+
+
+def get_known_states(s: Session, provider: str) -> dict[str, tuple[str, str]]:
+    """Return all stored (cursor, merkle_hash) for a provider's containers.
+
+    Returns dict of container_id → (state_cursor, merkle_hash).
+    The engine passes this to build_tree so adapters can skip unchanged
+    containers without fetching their children.
+    """
+    results: dict[str, tuple[str, str]] = {}
+    rows = (
+        s.query(NodePair, SyncCursor)
+        .join(SyncCursor, SyncCursor.pair_id == NodePair.id)
+        .filter(SyncCursor.provider == provider)
+        .all()
+    )
+    for pair, cursor in rows:
+        container_id = (
+            pair.a_node_id if pair.a_provider == provider else pair.b_node_id
+        )
+        if pair.merkle_hash:
+            results[container_id] = (cursor.cursor, pair.merkle_hash)
+    return results

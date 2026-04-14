@@ -73,6 +73,23 @@ def test_merkle_nested_containers():
     assert root.children[0].merkle_hash is not None
 
 
+def test_merkle_skipped_container_preserves_hash():
+    """A skipped container keeps its pre-set merkle_hash instead of recomputing."""
+    node = SyncNode("c1", "contacts", NodeType.CONTAINER,
+                    merkle_hash="stored_hash_abc", skipped=True)
+    # No children — but skipped=True means compute_merkle returns stored hash
+    h = node.compute_merkle()
+    assert h == "stored_hash_abc"
+
+
+def test_merkle_skipped_container_without_hash_recomputes():
+    """A skipped container with no pre-set hash still computes from children."""
+    node = SyncNode("c1", "contacts", NodeType.CONTAINER, skipped=True,
+                    children=[SyncNode("a", "a", NodeType.LEAF, fingerprint="fp1")])
+    h = node.compute_merkle()
+    assert len(h) == 16  # computed from child, not preserved
+
+
 def test_sync_item_round_trip():
     item = SyncItem("id1", ItemType.CONTACT, {"full_name": "Alice", "emails": ["a@b.com"]})
     d = item.to_dict()

@@ -52,11 +52,16 @@ class GraphContactAdapter(SyncProvider):
     def name(self) -> str:
         return "m365"
 
-    def build_tree(self, item_type: ItemType) -> SyncNode:
+    def build_tree(
+        self,
+        item_type: ItemType,
+        known_states: Optional[dict[str, tuple[str, str]]] = None,
+    ) -> SyncNode:
         """Build a container/leaf tree for all contact folders and contacts.
 
         Only fetches IDs and lastModifiedDateTime for fingerprinting, not full
-        contact data.
+        contact data. Graph has no reliable container-level state indicator,
+        so known_states is accepted but not used for pruning.
         """
         root = SyncNode(
             node_id="root",
