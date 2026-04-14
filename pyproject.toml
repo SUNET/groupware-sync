@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "groupware-sync-auth"
+name = "groupware-sync"
 version = "0.1.0"
-description = "OAuth helper for groupware-sync development (Microsoft 365 and Stalwart, device code flow)"
+description = "Two-way contacts sync between Stalwart (JMAP), Microsoft 365 (Graph), and CardDAV servers"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 dependencies = [
@@ -24,9 +24,17 @@ groupware-sync-contacts = "groupware_sync_contacts.cli:app"
 packages = ["src/groupware_sync_auth", "src/groupware_sync_contacts", "src/groupware_sync"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.8", "pip-audit>=2.7"]
 
 [tool.pytest.ini_options]
 markers = [
     "e2e: end-to-end tests requiring Docker services (deselect with '-m \"not e2e\"')",
 ]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

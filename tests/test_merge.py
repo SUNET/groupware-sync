@@ -1,7 +1,6 @@
 """Tests for field-level merge logic."""
 from datetime import datetime, timezone
 
-import pytest
 from groupware_sync.merge import merge_item
 from groupware_sync.models import (
     FieldDef,

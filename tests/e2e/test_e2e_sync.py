@@ -7,15 +7,12 @@ Run with:  pytest tests/e2e/ -m e2e -v
 """
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from groupware_sync.engine import sync_trees
 from groupware_sync.models import ItemType, SyncItem
 from groupware_sync_contacts.adapters.carddav_adapter import CardDavContactAdapter
 from groupware_sync_contacts.specs import CONTACT_SPEC
-
 from tests.e2e.conftest import radicale_available
 
 pytestmark = [pytest.mark.e2e, radicale_available]

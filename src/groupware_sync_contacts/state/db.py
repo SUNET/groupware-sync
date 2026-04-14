@@ -6,15 +6,12 @@ diff computation, and change-tracking cursors.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Optional
 
 from sqlalchemy import ForeignKey, String, Text, create_engine
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
-    Session,
     mapped_column,
     sessionmaker,
 )

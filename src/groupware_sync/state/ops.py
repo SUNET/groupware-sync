@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from groupware_sync.models import SyncItem
 from groupware_sync.state.db import ItemMapping, ItemSnapshot, NodePair, SyncCursor
 
-
 # ---------------------------------------------------------------------------
 # NodePair helpers
 # ---------------------------------------------------------------------------

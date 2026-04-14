@@ -37,14 +37,14 @@ def sync_cmd(
     _setup_logging(verbose)
     log = logging.getLogger(__name__)
 
-    from groupware_sync.config import Config as FrameworkConfig
     from groupware_sync import auth as fw_auth
+    from groupware_sync.config import Config as FrameworkConfig
     from groupware_sync.engine import sync_trees
     from groupware_sync.models import ItemType
     from groupware_sync.state.db import make_session_factory as fw_session_factory
-    from groupware_sync_contacts.specs import CONTACT_SPEC
-    from groupware_sync_contacts.adapters.jmap_adapter import JmapContactAdapter
     from groupware_sync_contacts.adapters.graph_adapter import GraphContactAdapter
+    from groupware_sync_contacts.adapters.jmap_adapter import JmapContactAdapter
+    from groupware_sync_contacts.specs import CONTACT_SPEC
 
     try:
         cfg = FrameworkConfig.from_env()

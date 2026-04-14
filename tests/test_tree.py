@@ -1,11 +1,15 @@
 """Tests for the tree comparison algorithm."""
 import os
+
 import pytest
+
 from groupware_sync.models import (
-    ItemType, NodeType, OpType, SyncNode,
+    ItemType,
+    NodeType,
+    OpType,
+    SyncNode,
 )
 from groupware_sync.state.db import make_session_factory
-from groupware_sync.state import ops
 from groupware_sync.tree import compare_trees
 
 
@@ -42,7 +46,7 @@ def test_identical_trees_produce_skip(session):
     tree_b = _make_tree({"contacts": [("c1", "fp1"), ("c2", "fp2")]})
 
     # First sync: no stored state, so won't prune
-    ops_list = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
+    compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
     session.commit()
 
     # Second sync: stored state matches → should prune
@@ -79,7 +83,7 @@ def test_deleted_on_a_deletes_on_b(session):
     tree_b = _make_tree({"contacts": [("c1", "fp1"), ("c2", "fp2")]})
 
     # First sync: establish mappings
-    ops1 = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
+    compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
     session.commit()
 
     # Second sync: c2 gone from A

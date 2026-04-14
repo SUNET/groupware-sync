@@ -108,8 +108,6 @@ def merge_item(
         - conflict_count: number of fields that required last-write-wins arbitration
     """
     merged_fields: dict[str, Any] = {}
-    item_changed_vs_a = False
-    item_changed_vs_b = False
     conflict_count = 0
 
     no_snapshot = snapshot is None
@@ -138,12 +136,8 @@ def merge_item(
                 a_changed = val_a != val_prev
                 b_changed = val_b != val_prev
 
-            result, chg_vs_a, chg_vs_b = _merge_set(val_a, val_b, val_prev, a_changed, b_changed)
+            result, _chg_vs_a, _chg_vs_b = _merge_set(val_a, val_b, val_prev, a_changed, b_changed)
             merged_fields[fname] = result
-            if chg_vs_a:
-                item_changed_vs_a = True
-            if chg_vs_b:
-                item_changed_vs_b = True
             continue
 
         # SCALAR strategy
@@ -160,11 +154,9 @@ def merge_item(
         elif a_changed and not b_changed:
             # Only A changed: take A
             merged_fields[fname] = val_a
-            item_changed_vs_b = True
         elif b_changed and not a_changed:
             # Only B changed: take B
             merged_fields[fname] = val_b
-            item_changed_vs_a = True
         else:
             # Both changed
             if val_a == val_b:

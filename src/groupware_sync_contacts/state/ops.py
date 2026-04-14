@@ -20,7 +20,6 @@ from groupware_sync_contacts.state.db import (
     SyncCursor,
 )
 
-
 # ---- addressbook pairs ------------------------------------------------------
 
 

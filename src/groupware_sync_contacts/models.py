@@ -8,7 +8,7 @@ The model is deliberately neutral — it is neither JSContact nor Graph.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
 

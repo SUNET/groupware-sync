@@ -16,8 +16,10 @@ from sqlalchemy.orm import Session
 from groupware_sync.merge import merge_item
 from groupware_sync.models import (
     ItemType,
+    NodeType,
     OpType,
     SyncItem,
+    SyncNode,
     SyncOp,
     SyncSummary,
     TypeSpec,
@@ -856,8 +858,6 @@ def _save_tree_cursors(
     JMAP's per-type state string). We persist these so the next build_tree
     can use them to skip unchanged containers.
     """
-    from groupware_sync.models import NodeType
-
     if tree.node_type != NodeType.CONTAINER:
         return
     for child in tree.children:

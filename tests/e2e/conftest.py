@@ -8,13 +8,12 @@ Tests are marked with ``e2e`` so they can be selected or skipped:
 from __future__ import annotations
 
 import os
-import tempfile
 
 import httpx
 import pytest
 
-from groupware_sync_contacts.adapters.carddav_adapter import CardDavContactAdapter
 from groupware_sync.state.db import make_session_factory
+from groupware_sync_contacts.adapters.carddav_adapter import CardDavContactAdapter
 
 RADICALE_URL = os.environ.get("RADICALE_URL", "http://localhost:15232")
 ALICE_USER = "alice"
