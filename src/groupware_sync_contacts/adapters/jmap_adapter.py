@@ -446,11 +446,12 @@ class JmapContactAdapter(SyncProvider):
             "using": USING,
             "methodCalls": method_calls,
         }
-        for attempt in range(4):
+        for attempt in range(8):
             r = self._client.post(self._api_url, json=body)  # type: ignore[arg-type]
             if r.status_code == 429:
-                retry_after = int(r.headers.get("retry-after", 2 ** attempt))
-                log.warning("JMAP 429 — retrying in %ds (attempt %d)", retry_after, attempt + 1)
+                default_wait = min(5 * (2 ** attempt), 120)  # 5, 10, 20, 40, 80, 120, 120, 120
+                retry_after = int(r.headers.get("retry-after", default_wait))
+                log.warning("JMAP 429 — retrying in %ds (attempt %d/8)", retry_after, attempt + 1)
                 _time.sleep(retry_after)
                 continue
             r.raise_for_status()
