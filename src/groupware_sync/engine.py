@@ -133,15 +133,31 @@ def _log_dry_run(
     prov_b_name: str,
     summary: SyncSummary,
 ) -> None:
-    """Log what each operation would do, and populate the summary counts."""
+    """Log what each operation would do, and populate the summary counts.
+
+    NOTE: The create count may be inflated on first sync because identity
+    matching (which pairs items by email/name across sides) only runs during
+    execution. Items that appear as creates on both sides may actually be
+    matched and merged instead.
+    """
     from collections import Counter
 
     counts = Counter(op.op_type for op in operations)
+    creates_a = sum(1 for op in operations if op.op_type == OpType.CREATE_ITEM and op.target_side == "a")
+    creates_b = sum(1 for op in operations if op.op_type == OpType.CREATE_ITEM and op.target_side == "b")
     summary.created = counts.get(OpType.CREATE_ITEM, 0)
     summary.deleted = counts.get(OpType.DELETE_ITEM, 0)
     summary.updated = counts.get(OpType.MERGE_ITEM, 0)
     summary.containers = counts.get(OpType.CREATE_CONTAINER, 0)
     summary.skipped = counts.get(OpType.SKIP_SUBTREE, 0)
+
+    if creates_a > 0 and creates_b > 0:
+        log.info(
+            "[dry-run] NOTE: %d creates on %s + %d creates on %s — "
+            "identity matching may reduce this (items with shared emails "
+            "will be merged instead of duplicated)",
+            creates_b, prov_a_name, creates_a, prov_b_name,
+        )
 
     for op in operations:
         if op.op_type == OpType.SKIP_SUBTREE:
