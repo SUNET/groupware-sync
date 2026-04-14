@@ -598,6 +598,20 @@ def _jmap_to_sync_item(card: dict[str, Any]) -> SyncItem:
             fields["notes"] = note_text
         break
 
+    # Photo — take the first from the media map
+    for _key, val in card.get("media", {}).items():
+        if val.get("kind") == "photo" or not val.get("kind"):
+            uri = val.get("uri", "")
+            if uri.startswith("data:"):
+                # Parse data URI: data:[<mediatype>][;base64],<data>
+                parts = uri.split(",", 1)
+                if len(parts) == 2 and ";base64" in parts[0]:
+                    fields["photo"] = parts[1]
+                    # Extract media type from "data:image/jpeg;base64"
+                    media_type = parts[0].replace("data:", "").replace(";base64", "")
+                    fields["photo_type"] = media_type or "image/jpeg"
+            break  # take first photo
+
     # Updated timestamp
     updated_at: Optional[datetime] = None
     if ts := card.get("updated"):
@@ -724,5 +738,11 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
     # Notes
     if fields.get("notes") is not None:
         card["notes"] = {"n0": {"note": fields["notes"]}}
+
+    # Photo
+    if fields.get("photo"):
+        media_type = fields.get("photo_type", "image/jpeg")
+        data_uri = f"data:{media_type};base64,{fields['photo']}"
+        card["media"] = {"m0": {"kind": "photo", "mediaType": media_type, "uri": data_uri}}
 
     return card

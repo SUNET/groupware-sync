@@ -669,6 +669,31 @@ def _vcard_to_sync_item(vcard_text: str, href: str, etag: str) -> SyncItem:
         if card.note.value:
             fields["notes"] = card.note.value
 
+    # Photo
+    if hasattr(card, "photo"):
+        import base64
+        photo_val = card.photo.value
+        if isinstance(photo_val, bytes):
+            fields["photo"] = base64.b64encode(photo_val).decode("ascii")
+        elif isinstance(photo_val, str):
+            # Might already be base64 or a URI
+            if photo_val.startswith("data:"):
+                parts = photo_val.split(",", 1)
+                if len(parts) == 2:
+                    fields["photo"] = parts[1]
+            else:
+                # Assume it's base64 already
+                fields["photo"] = photo_val
+
+        # Get media type
+        params = card.photo.params if hasattr(card.photo, "params") else {}
+        type_val = params.get("TYPE", params.get("MEDIATYPE", ["JPEG"]))
+        if isinstance(type_val, list):
+            type_val = type_val[0] if type_val else "JPEG"
+        if "/" not in str(type_val):
+            type_val = f"image/{type_val.lower()}"
+        fields["photo_type"] = str(type_val)
+
     return SyncItem(
         provider_id=href,
         item_type=ItemType.CONTACT,
@@ -770,5 +795,17 @@ def _sync_item_to_vcard(item: SyncItem, uid: Optional[str] = None) -> str:
     # Notes
     if fields.get("notes") is not None:
         card.add("note").value = fields["notes"]
+
+    # Photo
+    if fields.get("photo"):
+        import base64
+        photo_data = base64.b64decode(fields["photo"])
+        photo_prop = card.add("photo")
+        photo_prop.value = photo_data
+        photo_prop.encoding_param = "b"
+        media_type = fields.get("photo_type", "image/jpeg")
+        # Extract just the subtype for TYPE param (e.g., "JPEG" from "image/jpeg")
+        type_short = media_type.split("/")[-1].upper() if "/" in media_type else media_type.upper()
+        photo_prop.type_param = type_short
 
     return card.serialize()

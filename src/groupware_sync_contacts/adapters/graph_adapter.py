@@ -156,7 +156,18 @@ class GraphContactAdapter(SyncProvider):
                     log.warning("graph contact %s not found, skipping", cid)
                     continue
                 r.raise_for_status()
-                items.append(_graph_to_sync_item(r.json()))
+                item = _graph_to_sync_item(r.json())
+                # Fetch photo separately (stored outside the contact JSON)
+                try:
+                    photo_resp = self._client.get(f"/me/contacts/{cid}/photo/$value")
+                    if photo_resp.status_code == 200:
+                        import base64
+                        item.fields["photo"] = base64.b64encode(photo_resp.content).decode("ascii")
+                        content_type = photo_resp.headers.get("content-type", "image/jpeg")
+                        item.fields["photo_type"] = content_type
+                except Exception:
+                    pass  # no photo or error, skip silently
+                items.append(item)
             except httpx.HTTPStatusError as e:
                 log.error("graph get contact %s failed: %s", cid, e)
         return items
@@ -227,13 +238,40 @@ class GraphContactAdapter(SyncProvider):
         )
         r.raise_for_status()
         data = r.json()
-        return data["id"], data.get("lastModifiedDateTime", "")
+        contact_id = data["id"]
+        # Upload photo if present
+        if item.fields.get("photo"):
+            import base64
+            photo_bytes = base64.b64decode(item.fields["photo"])
+            content_type = item.fields.get("photo_type", "image/jpeg")
+            try:
+                self._client.put(
+                    f"/me/contacts/{contact_id}/photo/$value",
+                    content=photo_bytes,
+                    headers={"Content-Type": content_type},
+                )
+            except Exception:
+                log.warning("failed to upload photo for %s", contact_id)
+        return contact_id, data.get("lastModifiedDateTime", "")
 
     def update_item(self, container_id: str, item: SyncItem) -> str:
         """Update an existing contact. Returns server-assigned fingerprint."""
         body = _sync_item_to_graph(item)
         r = self._client.patch(f"/me/contacts/{item.provider_id}", json=body)
         r.raise_for_status()
+        # Upload photo if present
+        if item.fields.get("photo"):
+            import base64
+            photo_bytes = base64.b64decode(item.fields["photo"])
+            content_type = item.fields.get("photo_type", "image/jpeg")
+            try:
+                self._client.put(
+                    f"/me/contacts/{item.provider_id}/photo/$value",
+                    content=photo_bytes,
+                    headers={"Content-Type": content_type},
+                )
+            except Exception:
+                log.warning("failed to upload photo for %s", item.provider_id)
         return r.json().get("lastModifiedDateTime", "")
 
     def delete_item(self, container_id: str, item_id: str) -> None:

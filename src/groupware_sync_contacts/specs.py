@@ -28,6 +28,8 @@ CONTACT_SPEC = TypeSpec(
         # Personal
         FieldDef("birthday", MergeStrategy.SCALAR),
         FieldDef("notes", MergeStrategy.SCALAR),
+        FieldDef("photo", MergeStrategy.SCALAR),
+        FieldDef("photo_type", MergeStrategy.SCALAR),
     ],
     identity_fields=["emails", "full_name"],
     timestamp_field="updated_at",
