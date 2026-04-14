@@ -107,6 +107,9 @@ class GraphContactAdapter(SyncProvider):
             ]
             if not folders:
                 log.warning("addressbook filter %r matched nothing", self._addressbook_filter)
+            else:
+                # Normalize name so both sides match when paired
+                folders[0]["name"] = "__synced__"
 
         # 2. For each folder, fetch contact IDs + timestamps (lightweight)
         for folder in folders:

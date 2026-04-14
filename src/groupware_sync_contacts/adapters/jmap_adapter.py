@@ -94,6 +94,9 @@ class JmapContactAdapter(SyncProvider):
             ]
             if not addressbooks:
                 log.warning("addressbook filter %r matched nothing", self._addressbook_filter)
+            else:
+                # Normalize name so both sides match when paired
+                addressbooks[0]["name"] = "__synced__"
 
         # 2. For each addressbook, check if we can skip it
         for ab in addressbooks:
