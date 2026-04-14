@@ -585,6 +585,24 @@ def _vcard_to_sync_item(vcard_text: str, href: str, etag: str) -> SyncItem:
             fields["given_name"] = n.given
         if n.family:
             fields["surname"] = n.family
+        if hasattr(n, "additional") and n.additional:
+            fields["middle_name"] = n.additional
+        if hasattr(n, "prefix") and n.prefix:
+            fields["prefix"] = n.prefix
+        if hasattr(n, "suffix") and n.suffix:
+            fields["suffix"] = n.suffix
+
+    # Nickname
+    if hasattr(card, "nickname"):
+        fields["nickname"] = card.nickname.value
+
+    # Birthday
+    if hasattr(card, "bday"):
+        bday_val = card.bday.value
+        if hasattr(bday_val, "isoformat"):
+            fields["birthday"] = bday_val.isoformat()[:10]  # just the date part
+        else:
+            fields["birthday"] = str(bday_val)[:10]
 
     # Emails
     emails: list[dict[str, str]] = []
@@ -616,6 +634,14 @@ def _vcard_to_sync_item(vcard_text: str, href: str, etag: str) -> SyncItem:
             org_name = org_values[0] if isinstance(org_values, list) else org_values
             if org_name:
                 fields["organization"] = org_name
+            # Department is the second ORG component
+            if isinstance(org_values, list) and len(org_values) > 1:
+                fields["department"] = org_values[1]
+
+    # Website
+    if hasattr(card, "url"):
+        if card.url.value:
+            fields["website"] = card.url.value
 
     # Job title
     if hasattr(card, "title"):
@@ -677,9 +703,20 @@ def _sync_item_to_vcard(item: SyncItem, uid: Optional[str] = None) -> str:
 
     # Structured name
     card.add("n").value = vobject.vcard.Name(
-        family=fields.get("surname", ""),
-        given=fields.get("given_name", ""),
+        family=fields.get("surname") or "",
+        given=fields.get("given_name") or "",
+        additional=fields.get("middle_name") or "",
+        prefix=fields.get("prefix") or "",
+        suffix=fields.get("suffix") or "",
     )
+
+    # Nickname
+    if fields.get("nickname"):
+        card.add("nickname").value = fields["nickname"]
+
+    # Birthday
+    if fields.get("birthday"):
+        card.add("bday").value = fields["birthday"]
 
     # Emails
     for email_entry in fields.get("emails", []):
@@ -698,9 +735,20 @@ def _sync_item_to_vcard(item: SyncItem, uid: Optional[str] = None) -> str:
         else:
             t.type_param = label.upper()
 
-    # Organization
-    if fields.get("organization") is not None:
-        card.add("org").value = [fields["organization"]]
+    # Organization (with optional department as second value)
+    org_val: list[str] = []
+    if fields.get("organization"):
+        org_val.append(fields["organization"])
+    if fields.get("department"):
+        if not org_val:
+            org_val.append("")  # empty org name
+        org_val.append(fields["department"])
+    if org_val:
+        card.add("org").value = org_val
+
+    # Website
+    if fields.get("website"):
+        card.add("url").value = fields["website"]
 
     # Job title
     if fields.get("job_title") is not None:

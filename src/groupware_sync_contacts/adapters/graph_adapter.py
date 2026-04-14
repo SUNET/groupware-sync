@@ -268,6 +268,24 @@ def _graph_to_sync_item(item: dict[str, Any]) -> SyncItem:
         fields["job_title"] = item["jobTitle"]
     if item.get("personalNotes") is not None:
         fields["notes"] = item["personalNotes"]
+    if item.get("middleName") is not None:
+        fields["middle_name"] = item["middleName"]
+    if item.get("title") is not None:  # Graph "title" is honorific prefix (Mr/Ms), NOT job title
+        fields["prefix"] = item["title"]
+    if item.get("suffix") is not None:
+        fields["suffix"] = item["suffix"]
+    if item.get("nickName") is not None:
+        fields["nickname"] = item["nickName"]
+    if item.get("birthday") is not None:
+        # Graph returns birthday as ISO datetime "1990-01-15T00:00:00Z" — extract just the date
+        bday = item["birthday"]
+        if "T" in str(bday):
+            bday = str(bday).split("T")[0]
+        fields["birthday"] = bday
+    if item.get("department") is not None:
+        fields["department"] = item["department"]
+    if item.get("businessHomePage") is not None:
+        fields["website"] = item["businessHomePage"]
 
     # Emails — Graph's emailAddresses[].name is the person's display name,
     # NOT a type label. We don't have a reliable type, so use "other".
@@ -359,6 +377,20 @@ def _sync_item_to_graph(item: SyncItem) -> dict[str, Any]:
         body["jobTitle"] = fields["job_title"]
     if fields.get("notes") is not None:
         body["personalNotes"] = fields["notes"]
+    if fields.get("middle_name") is not None:
+        body["middleName"] = fields["middle_name"]
+    if fields.get("prefix") is not None:
+        body["title"] = fields["prefix"]
+    if fields.get("suffix") is not None:
+        body["suffix"] = fields["suffix"]
+    if fields.get("nickname") is not None:
+        body["nickName"] = fields["nickname"]
+    if fields.get("birthday") is not None:
+        body["birthday"] = fields["birthday"]
+    if fields.get("department") is not None:
+        body["department"] = fields["department"]
+    if fields.get("website") is not None:
+        body["businessHomePage"] = fields["website"]
 
     # Emails
     body["emailAddresses"] = [

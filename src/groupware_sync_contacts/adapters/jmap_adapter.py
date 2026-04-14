@@ -466,6 +466,12 @@ def _jmap_to_sync_item(card: dict[str, Any]) -> SyncItem:
             given_name = comp.get("value")
         elif comp.get("kind") == "surname":
             surname = comp.get("value")
+        elif comp.get("kind") == "middle":
+            fields["middle_name"] = comp.get("value")
+        elif comp.get("kind") == "prefix":
+            fields["prefix"] = comp.get("value")
+        elif comp.get("kind") == "suffix":
+            fields["suffix"] = comp.get("value")
     if given_name is not None:
         fields["given_name"] = given_name
     if surname is not None:
@@ -512,12 +518,34 @@ def _jmap_to_sync_item(card: dict[str, Any]) -> SyncItem:
     if phones:
         fields["phones"] = phones
 
+    # Nickname — take the first
+    for _key, val in card.get("nicknames", {}).items():
+        fields["nickname"] = val.get("name")
+        break  # take first
+
+    # Birthday (anniversaries with kind=birth)
+    for _key, val in card.get("anniversaries", {}).items():
+        if val.get("kind") == "birth":
+            fields["birthday"] = val.get("date")
+            break
+
     # Organization — take the first
     for _key, val in card.get("organizations", {}).items():
         org_name = val.get("name")
         if org_name is not None:
             fields["organization"] = org_name
+        # Department — first unit of first org
+        units = val.get("units", [])
+        if units:
+            fields["department"] = units[0].get("name")
         break
+
+    # Website — take the first online resource
+    for _key, val in card.get("online", {}).items():
+        resource = val.get("resource")
+        if resource:
+            fields["website"] = resource
+            break  # take first
 
     # Job title — take the first
     for _key, val in card.get("titles", {}).items():
@@ -601,6 +629,12 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
         components.append({"kind": "given", "value": fields["given_name"]})
     if fields.get("surname") is not None:
         components.append({"kind": "surname", "value": fields["surname"]})
+    if fields.get("middle_name") is not None:
+        components.append({"kind": "middle", "value": fields["middle_name"]})
+    if fields.get("prefix") is not None:
+        components.append({"kind": "prefix", "value": fields["prefix"]})
+    if fields.get("suffix") is not None:
+        components.append({"kind": "suffix", "value": fields["suffix"]})
     if components:
         name["components"] = components
     if name:
@@ -637,9 +671,26 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
                 "features": features,
             }
 
-    # Organization
-    if fields.get("organization") is not None:
-        card["organizations"] = {"o0": {"name": fields["organization"]}}
+    # Nickname
+    if fields.get("nickname") is not None:
+        card["nicknames"] = {"n0": {"name": fields["nickname"]}}
+
+    # Birthday
+    if fields.get("birthday") is not None:
+        card["anniversaries"] = {"a0": {"kind": "birth", "date": fields["birthday"]}}
+
+    # Organization (with optional department)
+    if fields.get("organization") is not None or fields.get("department") is not None:
+        org: dict[str, Any] = {}
+        if fields.get("organization") is not None:
+            org["name"] = fields["organization"]
+        if fields.get("department") is not None:
+            org["units"] = [{"name": fields["department"]}]
+        card["organizations"] = {"o0": org}
+
+    # Website
+    if fields.get("website") is not None:
+        card["online"] = {"w0": {"resource": fields["website"]}}
 
     # Job title
     if fields.get("job_title") is not None:
