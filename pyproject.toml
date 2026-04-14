@@ -25,3 +25,8 @@ packages = ["src/groupware_sync_auth", "src/groupware_sync_contacts", "src/group
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: end-to-end tests requiring Docker services (deselect with '-m \"not e2e\"')",
+]
