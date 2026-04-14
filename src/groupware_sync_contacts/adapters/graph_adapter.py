@@ -39,12 +39,13 @@ _ADDR_FIELDS = {
 class GraphContactAdapter(SyncProvider):
     """SyncProvider implementation backed by Microsoft Graph v1.0."""
 
-    def __init__(self, access_token: str) -> None:
+    def __init__(self, access_token: str, addressbook_filter: Optional[str] = None) -> None:
         self._client = httpx.Client(
             base_url=GRAPH_BASE,
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=TIMEOUT,
         )
+        self._addressbook_filter = addressbook_filter  # filter by displayName if set
 
     # -- SyncProvider interface ------------------------------------------------
 
@@ -97,6 +98,15 @@ class GraphContactAdapter(SyncProvider):
                     "name": item.get("displayName", "Contacts"),
                 })
             url = data.get("@odata.nextLink")
+
+        # Filter to specified addressbook if configured
+        if self._addressbook_filter:
+            folders = [
+                f for f in folders
+                if f["name"].lower() == self._addressbook_filter.lower()
+            ]
+            if not folders:
+                log.warning("addressbook filter %r matched nothing", self._addressbook_filter)
 
         # 2. For each folder, fetch contact IDs + timestamps (lightweight)
         for folder in folders:

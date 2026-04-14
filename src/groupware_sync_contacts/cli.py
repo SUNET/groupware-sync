@@ -149,8 +149,8 @@ def sync_v2_cmd(
         typer.echo(f"m365 auth error: {e}", err=True)
         raise typer.Exit(2)
 
-    jmap = JmapContactAdapter(cfg.stalwart_jmap_url, stalwart_token)
-    graph = GraphContactAdapter(m365_token)
+    jmap = JmapContactAdapter(cfg.stalwart_jmap_url, stalwart_token, addressbook_filter=cfg.stalwart_addressbook)
+    graph = GraphContactAdapter(m365_token, addressbook_filter=cfg.m365_addressbook)
     sf = fw_session_factory(cfg.state_database_url)
 
     try:

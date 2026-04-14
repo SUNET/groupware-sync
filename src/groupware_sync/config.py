@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 DEFAULT_STATE_DB = Path.home() / ".local" / "share" / "groupware-sync" / "sync.db"
 
@@ -20,7 +21,9 @@ class Config:
     sync_type: str
     stalwart: ProviderConfig
     stalwart_jmap_url: str
+    stalwart_addressbook: Optional[str]
     m365: ProviderConfig
+    m365_addressbook: Optional[str]
     state_database_url: str
 
     @classmethod
@@ -39,11 +42,13 @@ class Config:
                 auth_provider_name=req("SYNC_STALWART_AUTH_PROVIDER_NAME"),
             ),
             stalwart_jmap_url=req("SYNC_STALWART_JMAP_URL"),
+            stalwart_addressbook=os.environ.get("SYNC_STALWART_ADDRESSBOOK"),
             m365=ProviderConfig(
                 auth_database_url=req("SYNC_M365_AUTH_DATABASE_URL"),
                 auth_uid=req("SYNC_M365_AUTH_UID"),
                 auth_provider_name=req("SYNC_M365_AUTH_PROVIDER_NAME"),
             ),
+            m365_addressbook=os.environ.get("SYNC_M365_ADDRESSBOOK"),
             state_database_url=os.environ.get(
                 "SYNC_STATE_DATABASE_URL", f"sqlite:///{DEFAULT_STATE_DB}"
             ),

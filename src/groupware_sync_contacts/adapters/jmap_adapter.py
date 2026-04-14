@@ -32,7 +32,9 @@ USING = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"]
 class JmapContactAdapter(SyncProvider):
     """SyncProvider implementation backed by a Stalwart JMAP server."""
 
-    def __init__(self, jmap_url: str, access_token: str) -> None:
+    def __init__(
+        self, jmap_url: str, access_token: str, addressbook_filter: Optional[str] = None,
+    ) -> None:
         self._base_url = jmap_url.rstrip("/")
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {access_token}"},
@@ -41,6 +43,7 @@ class JmapContactAdapter(SyncProvider):
         )
         self._api_url: Optional[str] = None
         self._account_id: Optional[str] = None
+        self._addressbook_filter = addressbook_filter  # filter by displayName if set
 
     # -- SyncProvider interface ------------------------------------------------
 
@@ -82,6 +85,15 @@ class JmapContactAdapter(SyncProvider):
                         "id": item["id"],
                         "name": item.get("name", "Default"),
                     })
+
+        # Filter to specified addressbook if configured
+        if self._addressbook_filter:
+            addressbooks = [
+                ab for ab in addressbooks
+                if ab["name"].lower() == self._addressbook_filter.lower()
+            ]
+            if not addressbooks:
+                log.warning("addressbook filter %r matched nothing", self._addressbook_filter)
 
         # 2. For each addressbook, check if we can skip it
         for ab in addressbooks:
