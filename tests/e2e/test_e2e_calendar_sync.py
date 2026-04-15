@@ -8,7 +8,7 @@ Run with:  pytest tests/e2e/ -m e2e -v
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 
