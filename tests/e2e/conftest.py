@@ -183,3 +183,158 @@ def _clean_addressbooks(alice_book_href: str, bob_book_href: str) -> None:
     """Remove all contacts from both addressbooks before each test."""
     _delete_all_contacts(RADICALE_URL, ALICE_USER, ALICE_PASS, alice_book_href)
     _delete_all_contacts(RADICALE_URL, BOB_USER, BOB_PASS, bob_book_href)
+
+
+# ===========================================================================
+# Calendar fixtures
+# ===========================================================================
+
+def _ensure_calendar(base_url: str, user: str, password: str, cal_name: str) -> str:
+    """Create a CalDAV calendar collection for *user* if it does not already exist.
+
+    Returns the collection href (e.g. ``/alice/calendar/``).
+    """
+    href = f"/{user}/{cal_name}/"
+    url = f"{base_url}{href}"
+    client = httpx.Client(
+        auth=httpx.BasicAuth(user, password),
+        timeout=10,
+        follow_redirects=True,
+    )
+    try:
+        # Check if it exists
+        resp = client.request(
+            "PROPFIND",
+            url,
+            headers={"Depth": "0", "Content-Type": "application/xml"},
+            content=(
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<d:propfind xmlns:d="DAV:"><d:prop>'
+                "<d:resourcetype/>"
+                "</d:prop></d:propfind>"
+            ).encode(),
+        )
+        if resp.status_code < 400:
+            return href
+
+        # Create it via MKCALENDAR
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<cal:mkcalendar xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">'
+            "<d:set><d:prop>"
+            f"<d:displayname>{cal_name}</d:displayname>"
+            "</d:prop></d:set>"
+            "</cal:mkcalendar>"
+        )
+        resp = client.request(
+            "MKCALENDAR",
+            url,
+            headers={"Content-Type": "application/xml"},
+            content=body.encode(),
+        )
+        resp.raise_for_status()
+        return href
+    finally:
+        client.close()
+
+
+def _delete_all_events(base_url: str, user: str, password: str, cal_href: str) -> None:
+    """Remove every .ics resource from the given calendar collection."""
+    url = f"{base_url}{cal_href}"
+    client = httpx.Client(
+        auth=httpx.BasicAuth(user, password),
+        timeout=10,
+        follow_redirects=True,
+    )
+    try:
+        resp = client.request(
+            "PROPFIND",
+            url,
+            headers={"Depth": "1", "Content-Type": "application/xml"},
+            content=(
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<d:propfind xmlns:d="DAV:"><d:prop>'
+                "<d:resourcetype/>"
+                "</d:prop></d:propfind>"
+            ).encode(),
+        )
+        if resp.status_code >= 400:
+            return
+
+        import xml.etree.ElementTree as ET
+        DAV = "DAV:"
+        tree = ET.fromstring(resp.text)
+        for response_el in tree.findall(f"{{{DAV}}}response"):
+            href_el = response_el.find(f"{{{DAV}}}href")
+            if href_el is None or href_el.text is None:
+                continue
+            href = href_el.text.strip()
+            # Skip the collection itself
+            propstat = response_el.find(f"{{{DAV}}}propstat")
+            if propstat is not None:
+                prop = propstat.find(f"{{{DAV}}}prop")
+                if prop is not None:
+                    rt = prop.find(f"{{{DAV}}}resourcetype")
+                    if rt is not None and rt.find(f"{{{DAV}}}collection") is not None:
+                        continue
+            # Only delete .ics resources
+            if href.endswith(".ics"):
+                del_url = f"{base_url}{href}"
+                client.request("DELETE", del_url)
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# Session-scoped: calendar adapter instances (one per user)
+# ---------------------------------------------------------------------------
+
+from groupware_sync_calendar.adapters.caldav_adapter import CalDavCalendarAdapter  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def alice_cal_href() -> str:
+    """Ensure alice has a calendar collection and return its href."""
+    return _ensure_calendar(RADICALE_URL, ALICE_USER, ALICE_PASS, "calendar")
+
+
+@pytest.fixture(scope="session")
+def bob_cal_href() -> str:
+    """Ensure bob has a calendar collection and return its href."""
+    return _ensure_calendar(RADICALE_URL, BOB_USER, BOB_PASS, "calendar")
+
+
+@pytest.fixture(scope="session")
+def alice_calendar_adapter(alice_cal_href: str) -> CalDavCalendarAdapter:
+    """CalDavCalendarAdapter for alice on local Radicale."""
+    adapter = CalDavCalendarAdapter(RADICALE_URL, ALICE_USER, ALICE_PASS)
+    yield adapter  # type: ignore[misc]
+    adapter.close()
+
+
+@pytest.fixture(scope="session")
+def bob_calendar_adapter(bob_cal_href: str) -> CalDavCalendarAdapter:
+    """CalDavCalendarAdapter for bob on local Radicale."""
+    adapter = CalDavCalendarAdapter(RADICALE_URL, BOB_USER, BOB_PASS)
+    yield adapter  # type: ignore[misc]
+    adapter.close()
+
+
+# ---------------------------------------------------------------------------
+# Function-scoped: fresh state DB for each calendar test
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def calendar_state_session():
+    """Fresh in-memory SQLite state DB for each calendar test."""
+    sf = make_session_factory("sqlite://")
+    session = sf()
+    yield session
+    session.close()
+
+
+@pytest.fixture(autouse=True)
+def _clean_calendars(alice_cal_href: str, bob_cal_href: str) -> None:
+    """Remove all events from both calendar collections before each test."""
+    _delete_all_events(RADICALE_URL, ALICE_USER, ALICE_PASS, alice_cal_href)
+    _delete_all_events(RADICALE_URL, BOB_USER, BOB_PASS, bob_cal_href)

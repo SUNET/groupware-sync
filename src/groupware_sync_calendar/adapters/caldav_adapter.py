@@ -376,7 +376,12 @@ class CalDavCalendarAdapter(SyncProvider):
 
     def update_item(self, container_id: str, item: SyncItem) -> str:
         """Update an existing calendar event via PUT. Returns the new ETag."""
-        ical_text = _sync_item_to_ical(item)
+        # Always derive the UID from the resource filename so the iCal body
+        # matches the existing resource (Radicale enforces UID consistency).
+        href = item.provider_id or ""
+        basename = href.rstrip("/").rsplit("/", 1)[-1]
+        file_uid = basename[:-4] if basename.endswith(".ics") else None
+        ical_text = _sync_item_to_ical(item, uid=file_uid)
         url = self._abs_url(item.provider_id)
         headers: dict[str, str] = {"Content-Type": "text/calendar"}
         if item.fingerprint:
@@ -944,10 +949,10 @@ def _sync_item_to_ical(item: SyncItem, uid: Optional[str] = None) -> str:
             )
             dtstart_prop.value = local_dt
         else:
-            # UTC
+            # UTC — use vobject's utc sentinel so it serialises as DTSTART;TZID=UTC
             utc_str = dtstart_utc.replace("Z", "+00:00")
             dtstart_prop.value = datetime.fromisoformat(utc_str).replace(
-                tzinfo=timezone.utc
+                tzinfo=vobject.icalendar.utc
             )
 
     # DTEND
@@ -969,7 +974,7 @@ def _sync_item_to_ical(item: SyncItem, uid: Optional[str] = None) -> str:
         else:
             utc_str = dtend_utc.replace("Z", "+00:00")
             dtend_prop.value = datetime.fromisoformat(utc_str).replace(
-                tzinfo=timezone.utc
+                tzinfo=vobject.icalendar.utc
             )
 
     # Location
