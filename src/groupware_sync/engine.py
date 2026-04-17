@@ -24,7 +24,7 @@ from groupware_sync.models import (
     SyncSummary,
     TypeSpec,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import NotificationCapability, SyncProvider
 from groupware_sync.state import ops
 from groupware_sync.tree import compare_trees
 
@@ -135,9 +135,8 @@ def _annotation_for_op(
     provider_b: SyncProvider,
 ) -> str:
     """Return '' or '    [!] notifications best-effort/unsupported' for an op."""
-    from groupware_sync.provider import NotificationCapability
 
-    def cap_for(side: str, op_field: str) -> Optional[NotificationCapability]:
+    def cap_for(side: str, op_field: str) -> NotificationCapability:
         prov = provider_b if side == "b" else provider_a
         return getattr(prov.notification_policy, op_field)
 
