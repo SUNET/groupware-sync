@@ -36,7 +36,11 @@ def test_create_and_get_mapping(session):
     pair = ops.get_or_create_pair(
         session, "contact", "a", "b1", "b", "b2", "test"
     )
-    m = ops.create_mapping(session, pair.id, "a1", "b1", "fp_a", "fp_b")
+    m = ops.create_mapping(
+        session, pair.id, "a1", "b1",
+        identity_key="test-identity-1",
+        fingerprint_a="fp_a", fingerprint_b="fp_b",
+    )
     assert m.fingerprint_a == "fp_a"
     assert m.fingerprint_b == "fp_b"
     assert ops.get_mapping_by_a(session, pair.id, "a1") is not None
@@ -48,7 +52,9 @@ def test_delete_mapping_cascades_snapshot(session):
     pair = ops.get_or_create_pair(
         session, "contact", "a", "b1", "b", "b2", "test"
     )
-    m = ops.create_mapping(session, pair.id, "a1", "b1")
+    m = ops.create_mapping(
+        session, pair.id, "a1", "b1", identity_key="test-identity-2",
+    )
     item = SyncItem("a1", ItemType.CONTACT, {"full_name": "Test"})
     ops.save_snapshot(session, m.id, item)
     assert ops.get_snapshot(session, m.id) is not None
@@ -61,7 +67,9 @@ def test_snapshot_round_trip(session):
     pair = ops.get_or_create_pair(
         session, "contact", "a", "b1", "b", "b2", "test"
     )
-    m = ops.create_mapping(session, pair.id, "a1", "b1")
+    m = ops.create_mapping(
+        session, pair.id, "a1", "b1", identity_key="test-identity-3",
+    )
     item = SyncItem("a1", ItemType.CONTACT, {"full_name": "Alice", "emails": ["a@b.com"]})
     ops.save_snapshot(session, m.id, item)
     snap = ops.get_snapshot(session, m.id)
@@ -74,7 +82,9 @@ def test_snapshot_upsert(session):
     pair = ops.get_or_create_pair(
         session, "contact", "a", "b1", "b", "b2", "test"
     )
-    m = ops.create_mapping(session, pair.id, "a1", "b1")
+    m = ops.create_mapping(
+        session, pair.id, "a1", "b1", identity_key="test-identity-4",
+    )
     item1 = SyncItem("a1", ItemType.CONTACT, {"full_name": "Alice"})
     ops.save_snapshot(session, m.id, item1)
     item2 = SyncItem("a1", ItemType.CONTACT, {"full_name": "Alice Updated"})
@@ -110,7 +120,9 @@ def test_update_fingerprints(session):
     pair = ops.get_or_create_pair(
         session, "contact", "a", "b1", "b", "b2", "test"
     )
-    m = ops.create_mapping(session, pair.id, "a1", "b1")
+    m = ops.create_mapping(
+        session, pair.id, "a1", "b1", identity_key="test-identity-5",
+    )
     assert m.fingerprint_a is None
     ops.update_fingerprints(session, m, fingerprint_a="new_a", fingerprint_b="new_b")
     assert m.fingerprint_a == "new_a"

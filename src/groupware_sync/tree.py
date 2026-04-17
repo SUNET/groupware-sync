@@ -267,6 +267,10 @@ def _compare_node(
             pair.id,
             leaf_id,
             leaf_id,
+            # Placeholder: IP-9 will wire the real identity_key from
+            # SyncOp.identity_key. Using leaf_id keeps uniqueness within
+            # a pair so the uq_mapping_identity constraint is satisfied.
+            identity_key=f"legacy:{leaf_id}",
             fingerprint_a=leaf_a.fingerprint,
             fingerprint_b=leaf_b.fingerprint,
         )

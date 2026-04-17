@@ -5,6 +5,7 @@ Tables:
   ItemMapping   — maps individual items across providers within a pair
   ItemSnapshot  — full merged field data for a mapping
   SyncCursor    — change-tracking cursors per pair/provider
+  SchemaMeta    — schema version marker for cache-rebuild migrations
 """
 from __future__ import annotations
 
@@ -16,8 +17,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
+
+
+SCHEMA_VERSION = "2-identity-pairing"
 
 
 class Base(DeclarativeBase):
@@ -53,12 +58,17 @@ class NodePair(Base):
 
 
 class ItemMapping(Base):
-    """Maps a single item on provider A to its counterpart on provider B."""
+    """Maps a single item on provider A to its counterpart on provider B,
+    keyed on cross-provider identity (hash of TypeSpec.identity_fields)."""
 
     __tablename__ = "item_mapping"
+    __table_args__ = (
+        UniqueConstraint("pair_id", "identity_key", name="uq_mapping_identity"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     pair_id = Column(Integer, ForeignKey("node_pair.id", ondelete="CASCADE"), nullable=False)
+    identity_key = Column(String(64), nullable=False, index=True)
     a_item_id = Column(String(255), nullable=False)
     b_item_id = Column(String(255), nullable=False)
     fingerprint_a = Column(String(255), nullable=True)
@@ -107,8 +117,42 @@ class SyncCursor(Base):
     pair = relationship("NodePair", back_populates="cursors")
 
 
+class SchemaMeta(Base):
+    __tablename__ = "schema_meta"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(64), nullable=False)
+
+
+def _ensure_schema_version(engine) -> None:
+    """Stamp the current schema version or rebuild the cache on mismatch.
+
+    Strategy: we keep structural tables (node_pair, sync_cursor) intact
+    but drop cache contents (item_snapshot, item_mapping) on version
+    mismatch. The engine's safety invariant ensures the first post-
+    rebuild sync plans no deletes.
+    """
+    with engine.begin() as conn:
+        row = conn.execute(text("SELECT version FROM schema_meta LIMIT 1")).first()
+        if row is None:
+            conn.execute(
+                text("INSERT INTO schema_meta (version) VALUES (:v)"),
+                {"v": SCHEMA_VERSION},
+            )
+            return
+        if row[0] == SCHEMA_VERSION:
+            return
+        # Version mismatch: drop cache contents. Tables survive.
+        conn.execute(text("DELETE FROM item_snapshot"))
+        conn.execute(text("DELETE FROM item_mapping"))
+        conn.execute(
+            text("UPDATE schema_meta SET version = :v"),
+            {"v": SCHEMA_VERSION},
+        )
+
+
 def make_session_factory(database_url: str) -> sessionmaker:
-    """Create engine, ensure all tables exist, and return a sessionmaker."""
+    """Create engine, ensure schema + version, return a sessionmaker."""
     engine = create_engine(database_url, future=True)
     Base.metadata.create_all(engine)
+    _ensure_schema_version(engine)
     return sessionmaker(bind=engine, autoflush=True, autocommit=False)

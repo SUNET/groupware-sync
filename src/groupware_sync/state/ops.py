@@ -106,12 +106,14 @@ def create_mapping(
     pair_id: int,
     a_item_id: str,
     b_item_id: str,
+    identity_key: str,
     fingerprint_a: Optional[str] = None,
     fingerprint_b: Optional[str] = None,
 ) -> ItemMapping:
-    """Create and persist a new ItemMapping."""
+    """Create and persist a new ItemMapping keyed on identity."""
     mapping = ItemMapping(
         pair_id=pair_id,
+        identity_key=identity_key,
         a_item_id=a_item_id,
         b_item_id=b_item_id,
         fingerprint_a=fingerprint_a,
@@ -120,6 +122,36 @@ def create_mapping(
     s.add(mapping)
     s.flush()
     return mapping
+
+
+def get_mappings_by_identity(
+    s: Session, pair_id: int,
+) -> dict[str, ItemMapping]:
+    """Return all ItemMappings for a pair keyed by identity_key."""
+    rows = s.query(ItemMapping).filter_by(pair_id=pair_id).all()
+    return {m.identity_key: m for m in rows if m.identity_key is not None}
+
+
+def get_mapping_by_identity(
+    s: Session, pair_id: int, identity_key: str,
+) -> Optional[ItemMapping]:
+    """Look up a mapping by (pair_id, identity_key)."""
+    return (
+        s.query(ItemMapping)
+        .filter_by(pair_id=pair_id, identity_key=identity_key)
+        .first()
+    )
+
+
+def heal_mapping_ids(
+    s: Session,
+    mapping: ItemMapping,
+    new_a_item_id: str,
+    new_b_item_id: str,
+) -> None:
+    """Update provider IDs on a mapping when they've drifted. Identity stable."""
+    mapping.a_item_id = new_a_item_id
+    mapping.b_item_id = new_b_item_id
 
 
 def update_fingerprints(

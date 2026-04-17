@@ -718,6 +718,9 @@ def _execute_creates(
             pair.id,
             a_id,
             b_id,
+            # Placeholder: IP-9 wires the real identity_key from SyncOp.
+            # Using a_id keeps uniqueness within a pair.
+            identity_key=f"legacy:{a_id}",
             fingerprint_a=new_fp_a,
             fingerprint_b=new_fp_b,
         )
@@ -757,6 +760,9 @@ def _execute_creates(
             pair.id,
             a_id,
             new_b_id,
+            # Placeholder: IP-9 wires the real identity_key from SyncOp.
+            # Using a_id keeps uniqueness within a pair.
+            identity_key=f"legacy:{a_id}",
             fingerprint_a=item_a.fingerprint,
             fingerprint_b=new_b_fp,
         )
@@ -795,6 +801,9 @@ def _execute_creates(
             pair.id,
             new_a_id,
             b_id,
+            # Placeholder: IP-9 wires the real identity_key from SyncOp.
+            # Using b_id keeps uniqueness within a pair.
+            identity_key=f"legacy:{b_id}",
             fingerprint_a=new_a_fp,
             fingerprint_b=item_b.fingerprint,
         )
