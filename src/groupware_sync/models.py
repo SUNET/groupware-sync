@@ -165,6 +165,7 @@ class SyncOp:
     container_id_b: Optional[str] = None
     container_name: Optional[str] = None
     item_type: Optional[ItemType] = None
+    identity_key: Optional[str] = None
 
 
 @dataclass
@@ -199,3 +200,4 @@ class SyncSummary:
     skipped: int = 0
     errors: int = 0
     aborted: bool = False
+    identity_pairs_healed: int = 0
