@@ -41,6 +41,41 @@ class MergeStrategy(Enum):
     IGNORE = "ignore"
 
 
+def compute_identity_key(
+    fields: dict,
+    identity_fields: list[str],
+) -> Optional[str]:
+    """Canonical SHA-256 hex digest of the named fields, or None if unusable.
+
+    - Case-insensitive, whitespace-stripped canonicalization.
+    - List values: each element is normalized; order-independent.
+    - Dict values with a 'value' key: extract the value (for email/phone shapes).
+    """
+    def canonical(v: object) -> str:
+        if isinstance(v, dict):
+            v = v.get("value", "")
+        s = str(v).strip().lower()
+        return s
+
+    parts: list[str] = []
+    for name in identity_fields:
+        val = fields.get(name)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            entries = sorted(filter(None, (canonical(v) for v in val)))
+            for s in entries:
+                parts.append(f"{name}={s}")
+        else:
+            s = canonical(val)
+            if s:
+                parts.append(f"{name}={s}")
+    if not parts:
+        return None
+    parts.sort()
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
 @dataclass
 class SyncNode:
     """A node in the sync tree. Containers have children; leaves don't."""
@@ -54,6 +89,7 @@ class SyncNode:
     children: list[SyncNode] = field(default_factory=list)
     state_cursor: Optional[str] = None  # protocol's state indicator for this container
     skipped: bool = False  # True if children were not fetched (state unchanged)
+    identity_key: Optional[str] = None  # cross-provider pairing key for leaves
 
     def compute_merkle(self) -> str:
         """Compute subtree hash bottom-up.
