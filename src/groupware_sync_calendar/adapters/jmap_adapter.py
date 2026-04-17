@@ -23,7 +23,11 @@ from groupware_sync.models import (
     SyncItem,
     SyncNode,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
+    SyncProvider,
+)
 from groupware_sync_calendar import tz
 
 log = logging.getLogger(__name__)
@@ -71,6 +75,13 @@ _VALID_FREQ = {"YEARLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "MINUTELY", "SE
 
 class JmapCalendarAdapter(SyncProvider):
     """SyncProvider implementation backed by a Stalwart JMAP server."""
+
+    notification_policy = NotificationPolicy(
+        create_item=NotificationCapability.BEST_EFFORT,
+        update_item=NotificationCapability.BEST_EFFORT,
+        delete_item=NotificationCapability.BEST_EFFORT,
+        delete_container=NotificationCapability.BEST_EFFORT,
+    )
 
     def __init__(
         self,
@@ -355,6 +366,7 @@ class JmapCalendarAdapter(SyncProvider):
                 "CalendarEvent/set",
                 {
                     "accountId": self._account_id,
+                    "sendSchedulingMessages": False,
                     "create": {"new1": event},
                 },
                 "c0",
@@ -385,6 +397,7 @@ class JmapCalendarAdapter(SyncProvider):
                 "CalendarEvent/set",
                 {
                     "accountId": self._account_id,
+                    "sendSchedulingMessages": False,
                     "update": {item.provider_id: event},
                 },
                 "u0",
@@ -431,6 +444,7 @@ class JmapCalendarAdapter(SyncProvider):
                 "CalendarEvent/set",
                 {
                     "accountId": self._account_id,
+                    "sendSchedulingMessages": False,
                     "destroy": [item_id],
                 },
                 "d0",
