@@ -177,6 +177,7 @@ class GraphContactAdapter(SyncProvider):
                         node_type=NodeType.LEAF,
                         fingerprint=contact.get("lastModifiedDateTime", ""),
                         item_type=ItemType.CONTACT,
+                        identity_key=None,
                     )
                     folder_node.children.append(leaf)
                 next_link = data.get("@odata.nextLink")

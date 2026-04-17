@@ -164,6 +164,7 @@ class CardDavContactAdapter(SyncProvider):
                     node_type=NodeType.LEAF,
                     fingerprint=etag or "",
                     item_type=ItemType.CONTACT,
+                    identity_key=None,
                 )
                 ab_node.children.append(leaf)
 

@@ -182,6 +182,7 @@ class JmapContactAdapter(SyncProvider):
                                 node_type=NodeType.LEAF,
                                 fingerprint=card.get("updated", ""),
                                 item_type=ItemType.CONTACT,
+                                identity_key=None,
                             )
                             ab_node.children.append(leaf)
 
