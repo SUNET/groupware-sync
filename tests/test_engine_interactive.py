@@ -141,19 +141,37 @@ def _basic_spec() -> TypeSpec:
 
 
 def test_confirm_true_runs_writes(session):
-    a = _fake("a", NotificationCapability.SUPPRESSED)
-    b = _fake("b", NotificationCapability.SUPPRESSED)
+    """Non-empty plan + confirm returning True must invoke the callback AND
+    execute phase 4 writes on the target side."""
+    # Both sides have a container with the same id ("c1"); leaf exists only
+    # on b, so the plan is a single CREATE_ITEM on a (no container create).
+    leaf = SyncNode("x1", "x1", NodeType.LEAF, fingerprint="fp", item_type=ItemType.CALENDAR_EVENT)
+    a_container = SyncNode("c1", "c1", NodeType.CONTAINER, children=[])
+    b_container = SyncNode("c1", "c1", NodeType.CONTAINER, children=[leaf])
+    a_tree = SyncNode("root", "root", NodeType.CONTAINER, children=[a_container])
+    a_tree.compute_merkle()
+    b_tree = SyncNode("root", "root", NodeType.CONTAINER, children=[b_container])
+    b_tree.compute_merkle()
+
+    a = FakeProvider("a", _policy(NotificationCapability.SUPPRESSED), a_tree)
+    b = FakeProvider("b", _policy(NotificationCapability.SUPPRESSED), b_tree)
+
+    # The FakeProvider's default get_items returns []; populate b so the
+    # engine's create path can fetch the source item.
+    from unittest.mock import patch
+    fetched_item = SyncItem(provider_id="x1", item_type=ItemType.CALENDAR_EVENT, fields={"uid": "u1"})
     called: list[bool] = []
 
     def confirm(ops, summary):
         called.append(True)
         return True
 
-    summary = sync_trees(a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, confirm=confirm)
-    # Empty-plan short-circuit fires here (both trees are empty) — confirm is
-    # not called and the summary is aborted=False with all zeros.
-    assert called == []
+    with patch.object(FakeProvider, "get_items", return_value=[fetched_item]):
+        summary = sync_trees(a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, confirm=confirm)
+    assert called == [True]
     assert summary.aborted is False
+    # The planned op was a CREATE_ITEM on side a; confirm that phase 4 ran.
+    assert len(a.create_item_calls) == 1
 
 
 def test_confirm_false_sets_aborted_and_skips_writes(session):

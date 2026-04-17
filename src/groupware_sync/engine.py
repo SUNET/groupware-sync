@@ -116,7 +116,7 @@ def sync_trees(
             f" created={plan_summary.created}"
             f" updated={plan_summary.updated}"
             f" deleted={plan_summary.deleted}"
-            f" conflicts=0 skipped={plan_summary.skipped}"
+            f" skipped={plan_summary.skipped}"
         )
         print(summary_line, file=sys.stdout)
         if any("[!]" in line for line in lines):
