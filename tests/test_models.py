@@ -4,6 +4,11 @@ from groupware_sync.models import (
     NodeType,
     SyncItem,
     SyncNode,
+    SyncSummary,
+)
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
 )
 
 
@@ -109,12 +114,6 @@ def test_sync_item_round_trip_with_datetime():
     assert item2.updated_at == ts
 
 
-from groupware_sync.provider import (
-    NotificationCapability,
-    NotificationPolicy,
-)
-
-
 def test_notification_capability_values():
     assert NotificationCapability.SUPPRESSED.value == "suppressed"
     assert NotificationCapability.BEST_EFFORT.value == "best-effort"
@@ -130,9 +129,6 @@ def test_notification_policy_construction():
     )
     assert policy.create_item is NotificationCapability.SUPPRESSED
     assert policy.delete_item is NotificationCapability.UNSUPPORTED
-
-
-from groupware_sync.models import SyncSummary
 
 
 def test_sync_summary_aborted_defaults_false():
