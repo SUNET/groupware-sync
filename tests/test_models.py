@@ -130,3 +130,16 @@ def test_notification_policy_construction():
     )
     assert policy.create_item is NotificationCapability.SUPPRESSED
     assert policy.delete_item is NotificationCapability.UNSUPPORTED
+
+
+from groupware_sync.models import SyncSummary
+
+
+def test_sync_summary_aborted_defaults_false():
+    s = SyncSummary()
+    assert s.aborted is False
+
+
+def test_sync_summary_aborted_settable():
+    s = SyncSummary(aborted=True)
+    assert s.aborted is True

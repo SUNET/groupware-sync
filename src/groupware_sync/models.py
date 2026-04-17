@@ -158,3 +158,4 @@ class SyncSummary:
     conflicts: int = 0
     skipped: int = 0
     errors: int = 0
+    aborted: bool = False
