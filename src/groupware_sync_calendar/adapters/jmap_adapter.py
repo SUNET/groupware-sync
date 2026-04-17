@@ -22,6 +22,7 @@ from groupware_sync.models import (
     NodeType,
     SyncItem,
     SyncNode,
+    compute_identity_key,
 )
 from groupware_sync.provider import (
     NotificationCapability,
@@ -214,7 +215,7 @@ class JmapCalendarAdapter(SyncProvider):
                         {
                             "accountId": self._account_id,
                             "ids": event_ids,
-                            "properties": ["id", "updated"],
+                            "properties": ["id", "updated", "uid"],
                         },
                         "g0",
                     ],
@@ -222,12 +223,16 @@ class JmapCalendarAdapter(SyncProvider):
                 for result in get_results:
                     if result[0] == "CalendarEvent/get":
                         for event in result[1].get("list", []):
+                            idk = compute_identity_key(
+                                {"uid": event.get("uid")}, ["uid"]
+                            )
                             leaf = SyncNode(
                                 node_id=event["id"],
                                 name=event["id"],
                                 node_type=NodeType.LEAF,
                                 fingerprint=event.get("updated", ""),
                                 item_type=ItemType.CALENDAR_EVENT,
+                                identity_key=idk,
                             )
                             cal_node.children.append(leaf)
 

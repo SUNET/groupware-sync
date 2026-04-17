@@ -1,0 +1,83 @@
+"""JMAP calendar adapter: identity_key on leaves from uid."""
+from __future__ import annotations
+
+from unittest.mock import patch
+
+from groupware_sync.models import ItemType, NodeType, compute_identity_key
+from groupware_sync_calendar.adapters.jmap_adapter import JmapCalendarAdapter
+
+
+def _make_adapter() -> JmapCalendarAdapter:
+    a = JmapCalendarAdapter("https://example.invalid/jmap", "token")
+    a._api_url = "https://example.invalid/jmap/api"
+    a._account_id = "u0"
+    return a
+
+
+def test_build_tree_requests_uid_property():
+    """The CalendarEvent/get call in build_tree must include 'uid' in properties."""
+    captured: list = []
+
+    def fake_call(self, methods):  # noqa: ANN001
+        captured.append(methods)
+        out = []
+        for m in methods:
+            name = m[0]
+            cid = m[2]
+            if name == "Calendar/get":
+                out.append([name, {"list": [{"id": "cal1", "name": "Kalender"}]}, cid])
+            elif name == "CalendarEvent/query":
+                out.append([name, {"ids": ["e1", "e2"]}, cid])
+            elif name == "CalendarEvent/get":
+                out.append([name, {"list": [
+                    {"id": "e1", "updated": "2026-04-17T00:00:00Z", "uid": "uid-one"},
+                    {"id": "e2", "updated": "2026-04-17T00:00:00Z", "uid": "uid-two"},
+                ]}, cid])
+        return out
+
+    adapter = _make_adapter()
+    with patch.object(JmapCalendarAdapter, "_call", fake_call):
+        with patch.object(JmapCalendarAdapter, "_get_events_state", return_value=None):
+            root = adapter.build_tree(ItemType.CALENDAR_EVENT)
+
+    # Assert: the CalendarEvent/get invocation requested 'uid'
+    get_calls = [m for call in captured for m in call if m[0] == "CalendarEvent/get"]
+    assert get_calls, "no CalendarEvent/get calls made"
+    props = get_calls[0][1].get("properties", [])
+    assert "uid" in props, f"expected 'uid' in properties, got {props}"
+
+    # Assert: leaves carry identity_key derived from uid
+    cal = root.children[0]
+    assert cal.node_type == NodeType.CONTAINER
+    leaf_by_id = {c.node_id: c for c in cal.children}
+    assert leaf_by_id["e1"].identity_key == compute_identity_key(
+        {"uid": "uid-one"}, ["uid"]
+    )
+    assert leaf_by_id["e2"].identity_key == compute_identity_key(
+        {"uid": "uid-two"}, ["uid"]
+    )
+
+
+def test_leaf_has_no_identity_key_when_uid_missing():
+    def fake_call(self, methods):  # noqa: ANN001
+        out = []
+        for m in methods:
+            name = m[0]
+            cid = m[2]
+            if name == "Calendar/get":
+                out.append([name, {"list": [{"id": "cal1", "name": "Kalender"}]}, cid])
+            elif name == "CalendarEvent/query":
+                out.append([name, {"ids": ["e1"]}, cid])
+            elif name == "CalendarEvent/get":
+                out.append([name, {"list": [
+                    {"id": "e1", "updated": "2026-04-17T00:00:00Z"},
+                ]}, cid])
+        return out
+
+    adapter = _make_adapter()
+    with patch.object(JmapCalendarAdapter, "_call", fake_call):
+        with patch.object(JmapCalendarAdapter, "_get_events_state", return_value=None):
+            root = adapter.build_tree(ItemType.CALENDAR_EVENT)
+
+    leaf = root.children[0].children[0]
+    assert leaf.identity_key is None
