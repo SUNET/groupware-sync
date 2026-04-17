@@ -233,6 +233,22 @@ def test_empty_plan_skips_confirm(session):
     assert summary.aborted is False
 
 
+def test_skip_only_plan_does_not_prompt(session):
+    """A plan that contains only SKIP_SUBTREE ops (subtrees matched stored
+    state, nothing to do) must NOT prompt the user. Populating the summary's
+    skipped count and returning cleanly is the correct behavior."""
+    from groupware_sync.engine import _has_write_op
+
+    skip_op = SyncOp(op_type=OpType.SKIP_SUBTREE, target_side="a", node_id="cal-1")
+    both_gone = SyncOp(op_type=OpType.DELETE_ITEM, target_side="both", node_id="x", paired_node_id="y")
+    assert _has_write_op([skip_op]) is False
+    assert _has_write_op([both_gone]) is False
+    assert _has_write_op([skip_op, both_gone]) is False
+
+    write_op = SyncOp(op_type=OpType.CREATE_ITEM, target_side="b", node_id="x1", container_id_b="cb")
+    assert _has_write_op([skip_op, write_op]) is True
+
+
 def test_confirm_keyboard_interrupt_propagates(session):
     # Build a non-empty plan (leaf exists only on provider_b, so engine plans a create on a).
     leaf = SyncNode("x1", "x1", NodeType.LEAF, fingerprint="fp", item_type=ItemType.CALENDAR_EVENT)

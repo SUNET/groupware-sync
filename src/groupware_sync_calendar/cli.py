@@ -84,7 +84,7 @@ def sync_cmd(
         m365_token = fw_auth.get_access_token(
             cfg.m365.auth_database_url, cfg.m365.auth_uid, cfg.m365.auth_provider_name,
         )
-    except (ValueError, Exception) as e:
+    except Exception as e:
         typer.echo(f"m365 auth error: {e}", err=True)
         raise typer.Exit(2)
 

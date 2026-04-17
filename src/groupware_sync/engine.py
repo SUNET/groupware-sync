@@ -102,8 +102,12 @@ def sync_trees(
         return summary
 
     if confirm is not None:
-        if not operations:
-            log.info("Plan is empty — nothing to confirm, no writes to execute")
+        if not _has_write_op(operations):
+            # Empty plan or a plan that is only SKIP_SUBTREE / both-gone
+            # reconciliations: no writes to confirm. Populate summary so the
+            # caller can still report skipped counts, then return.
+            _populate_plan_summary(operations, summary)
+            log.info("Plan has no writes — nothing to confirm, no writes to execute")
             return summary
 
         plan_summary = SyncSummary()
@@ -159,6 +163,27 @@ def sync_trees(
 # ---------------------------------------------------------------------------
 # Dry-run reporting
 # ---------------------------------------------------------------------------
+
+
+def _has_write_op(operations: list[SyncOp]) -> bool:
+    """True if any op would cause a write on either side.
+
+    SKIP_SUBTREE is purely informational (subtree matched stored state).
+    DELETE_ITEM with target_side='both' is a mapping cleanup (both sides
+    already deleted). Neither triggers a provider write, so a plan
+    consisting only of these should not prompt the user.
+    """
+    for op in operations:
+        if op.op_type in (
+            OpType.CREATE_CONTAINER,
+            OpType.CREATE_ITEM,
+            OpType.MERGE_ITEM,
+            OpType.DELETE_CONTAINER,
+        ):
+            return True
+        if op.op_type == OpType.DELETE_ITEM and op.target_side != "both":
+            return True
+    return False
 
 
 def _annotation_for_op(
