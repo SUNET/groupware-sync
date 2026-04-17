@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 import typer
+
+from groupware_sync import auth as fw_auth
+from groupware_sync.config import Config
+from groupware_sync.engine import sync_trees
+from groupware_sync.models import ItemType
+from groupware_sync.state.db import make_session_factory
 
 app = typer.Typer(
     help="Two-way calendar sync between Stalwart and Microsoft 365",
@@ -21,20 +28,40 @@ def _setup_logging(verbose: bool) -> None:
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
 
 
+def _stdin_isatty() -> bool:
+    """Indirection so tests can stub TTY detection reliably.
+
+    The Click/Typer test runner replaces ``sys.stdin`` with a pipe-backed
+    wrapper inside ``invoke()``, so patching ``sys.stdin.isatty`` from the
+    outside doesn't take effect during the command body. Routing through
+    this module-level function gives tests a stable patch target.
+    """
+    return sys.stdin.isatty()
+
+
 @app.command(name="sync")
 def sync_cmd(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be done without making changes"),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="Skip the interactive confirmation and execute immediately. Intended for cron and CI.",
+    ),
 ) -> None:
     """Two-way calendar sync using the tree-based framework engine."""
     _setup_logging(verbose)
     log = logging.getLogger(__name__)
 
-    from groupware_sync import auth as fw_auth
-    from groupware_sync.config import Config
-    from groupware_sync.engine import sync_trees
-    from groupware_sync.models import ItemType
-    from groupware_sync.state.db import make_session_factory
+    # TTY guard: if default mode (not dry-run, not non-interactive) and
+    # stdin isn't a TTY, fail fast before touching any remote state.
+    if not dry_run and not non_interactive and not _stdin_isatty():
+        typer.echo(
+            "interactive mode requires a TTY; pass --non-interactive to auto-execute or --dry-run to preview only",
+            err=True,
+        )
+        raise typer.Exit(2)
+
     from groupware_sync_calendar.adapters.graph_adapter import GraphCalendarAdapter
     from groupware_sync_calendar.adapters.jmap_adapter import JmapCalendarAdapter
     from groupware_sync_calendar.specs import CALENDAR_EVENT_SPEC
@@ -65,9 +92,24 @@ def sync_cmd(
     graph = GraphCalendarAdapter(m365_token, calendar_filter=cfg.m365_calendar)
     sf = make_session_factory(cfg.state_database_url)
 
+    # Choose engine inputs. --dry-run wins silently over --non-interactive.
+    confirm = None
+    if not dry_run and not non_interactive:
+        def confirm(ops, plan_summary):  # noqa: E306
+            return typer.confirm(
+                f"Execute {plan_summary.deleted} deletes, "
+                f"{plan_summary.created} creates, "
+                f"{plan_summary.updated} updates, "
+                f"{plan_summary.containers} container ops?",
+                default=False,
+            )
+
     try:
         with sf() as session:
-            summary = sync_trees(jmap, graph, ItemType.CALENDAR_EVENT, CALENDAR_EVENT_SPEC, session, dry_run=dry_run)
+            summary = sync_trees(
+                jmap, graph, ItemType.CALENDAR_EVENT, CALENDAR_EVENT_SPEC, session,
+                dry_run=dry_run, confirm=confirm,
+            )
     except Exception as e:
         log.error("sync failed: %s", e, exc_info=True)
         typer.echo(f"sync failed: {e}", err=True)
@@ -75,6 +117,10 @@ def sync_cmd(
     finally:
         jmap.close()
         graph.close()
+
+    if summary.aborted:
+        typer.echo("sync aborted by user — no changes made")
+        raise typer.Exit(0)
 
     typer.echo(
         f"sync: containers={summary.containers}"
