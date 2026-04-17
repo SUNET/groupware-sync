@@ -6,13 +6,38 @@ protocol-specific tree building, item fetching, and CRUD operations.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from groupware_sync.models import ChangeSet, ItemType, SyncItem, SyncNode
 
 
+class NotificationCapability(Enum):
+    """Per-op-type capability for suppressing scheduling/notification traffic."""
+
+    SUPPRESSED = "suppressed"
+    BEST_EFFORT = "best-effort"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True)
+class NotificationPolicy:
+    """An adapter's declared suppression capability for each write op."""
+
+    create_item: NotificationCapability
+    update_item: NotificationCapability
+    delete_item: NotificationCapability
+    delete_container: NotificationCapability
+
+
 class SyncProvider(ABC):
     """Abstract base class for a groupware backend."""
+
+    # Required class attribute: declare what suppression the adapter provides.
+    # Adapters MUST override this; no default is provided because a silent
+    # default of SUPPRESSED would hide real gaps.
+    notification_policy: NotificationPolicy
 
     @property
     @abstractmethod
