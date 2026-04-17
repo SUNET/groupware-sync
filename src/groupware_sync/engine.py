@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import sys
 from collections import defaultdict
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,7 @@ def sync_trees(
     type_spec: TypeSpec,
     session: Session,
     dry_run: bool = False,
+    confirm: Optional[Callable[[list[SyncOp], SyncSummary], bool]] = None,
 ) -> SyncSummary:
     """Run a full two-way tree sync between two providers.
 
@@ -95,10 +97,40 @@ def sync_trees(
     log.info("Phase 3 produced %d operations", len(operations))
 
     if dry_run:
-        # Log the plan without executing
         _log_dry_run(operations, provider_a, provider_b, summary)
         log.info("Dry run complete — no changes made")
         return summary
+
+    if confirm is not None:
+        if not operations:
+            log.info("Plan is empty — nothing to confirm, no writes to execute")
+            return summary
+
+        plan_summary = SyncSummary()
+        _populate_plan_summary(operations, plan_summary)
+        lines = _format_plan(operations, provider_a, provider_b)
+        for line in lines:
+            print(line, file=sys.stdout)
+        summary_line = (
+            f"SUMMARY containers={plan_summary.containers}"
+            f" created={plan_summary.created}"
+            f" updated={plan_summary.updated}"
+            f" deleted={plan_summary.deleted}"
+            f" conflicts=0 skipped={plan_summary.skipped}"
+        )
+        print(summary_line, file=sys.stdout)
+        if any("[!]" in line for line in lines):
+            print(
+                "NOTE: some ops may emit attendee notifications (see [!] markers above)",
+                file=sys.stdout,
+            )
+
+        approved = confirm(operations, plan_summary)
+        if not approved:
+            _populate_plan_summary(operations, summary)
+            summary.aborted = True
+            log.info("Sync aborted by user — no writes executed")
+            return summary
 
     # Phase 4 — Execute operations
     log.info("Phase 4: executing operations")

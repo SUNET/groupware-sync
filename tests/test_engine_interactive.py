@@ -2,7 +2,9 @@
 callback branch of sync_trees."""
 from __future__ import annotations
 
-from groupware_sync.engine import _format_plan
+import pytest
+
+from groupware_sync.engine import _format_plan, sync_trees
 from groupware_sync.models import (
     ItemType,
     NodeType,
@@ -17,6 +19,7 @@ from groupware_sync.provider import (
     NotificationPolicy,
     SyncProvider,
 )
+from groupware_sync.state.db import make_session_factory
 
 
 def _policy(cap: NotificationCapability) -> NotificationPolicy:
@@ -122,3 +125,113 @@ def test_format_plan_skip_subtree_never_annotated():
     ops = [SyncOp(op_type=OpType.SKIP_SUBTREE, target_side="b", node_id="x")]
     lines = _format_plan(ops, a, b)
     assert "[!]" not in lines[0]
+
+
+@pytest.fixture
+def session(tmp_path):
+    db_path = tmp_path / "t.db"
+    sf = make_session_factory(f"sqlite:///{db_path}")
+    s = sf()
+    yield s
+    s.close()
+
+
+def _basic_spec() -> TypeSpec:
+    return TypeSpec(item_type=ItemType.CALENDAR_EVENT, fields=[], identity_fields=[])
+
+
+def test_confirm_true_runs_writes(session):
+    a = _fake("a", NotificationCapability.SUPPRESSED)
+    b = _fake("b", NotificationCapability.SUPPRESSED)
+    called: list[bool] = []
+
+    def confirm(ops, summary):
+        called.append(True)
+        return True
+
+    summary = sync_trees(a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, confirm=confirm)
+    # Empty-plan short-circuit fires here (both trees are empty) — confirm is
+    # not called and the summary is aborted=False with all zeros.
+    assert called == []
+    assert summary.aborted is False
+
+
+def test_confirm_false_sets_aborted_and_skips_writes(session):
+    # Build non-empty trees so we can exercise the confirm branch.
+    leaf = SyncNode("x1", "x1", NodeType.LEAF, fingerprint="fp", item_type=ItemType.CALENDAR_EVENT)
+    container = SyncNode("cb", "cb", NodeType.CONTAINER, children=[leaf])
+    a_tree = SyncNode("root-a", "root-a", NodeType.CONTAINER, children=[])
+    a_tree.compute_merkle()
+    b_tree = SyncNode("root-b", "root-b", NodeType.CONTAINER, children=[container])
+    b_tree.compute_merkle()
+
+    a = FakeProvider("a", _policy(NotificationCapability.SUPPRESSED), a_tree)
+    b = FakeProvider("b", _policy(NotificationCapability.SUPPRESSED), b_tree)
+
+    def confirm(ops, summary):
+        return False
+
+    summary = sync_trees(a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, confirm=confirm)
+    assert summary.aborted is True
+    # No writes happened on either side.
+    assert a.create_item_calls == [] and b.create_item_calls == []
+    assert a.delete_item_calls == [] and b.delete_item_calls == []
+
+
+def test_confirm_none_runs_legacy_path(session):
+    a = _fake("a", NotificationCapability.SUPPRESSED)
+    b = _fake("b", NotificationCapability.SUPPRESSED)
+    summary = sync_trees(a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, confirm=None)
+    assert summary.aborted is False
+
+
+def test_dry_run_ignores_confirm(session):
+    a = _fake("a", NotificationCapability.SUPPRESSED)
+    b = _fake("b", NotificationCapability.SUPPRESSED)
+    called: list[bool] = []
+
+    def confirm(ops, summary):
+        called.append(True)
+        return True
+
+    summary = sync_trees(
+        a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, dry_run=True, confirm=confirm
+    )
+    assert called == []
+    assert summary.aborted is False
+
+
+def test_empty_plan_skips_confirm(session):
+    a = _fake("a", NotificationCapability.SUPPRESSED)
+    b = _fake("b", NotificationCapability.SUPPRESSED)
+    called: list[bool] = []
+
+    def confirm(ops, summary):
+        called.append(True)
+        return True
+
+    summary = sync_trees(a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, confirm=confirm)
+    assert called == []
+    assert summary.aborted is False
+
+
+def test_confirm_keyboard_interrupt_propagates(session):
+    # Build a non-empty plan (leaf exists only on provider_b, so engine plans a create on a).
+    leaf = SyncNode("x1", "x1", NodeType.LEAF, fingerprint="fp", item_type=ItemType.CALENDAR_EVENT)
+    container = SyncNode("cb", "cb", NodeType.CONTAINER, children=[leaf])
+    a_tree = SyncNode("root-a", "root-a", NodeType.CONTAINER, children=[])
+    a_tree.compute_merkle()
+    b_tree = SyncNode("root-b", "root-b", NodeType.CONTAINER, children=[container])
+    b_tree.compute_merkle()
+
+    a = FakeProvider("a", _policy(NotificationCapability.SUPPRESSED), a_tree)
+    b = FakeProvider("b", _policy(NotificationCapability.SUPPRESSED), b_tree)
+
+    def confirm(ops, summary):
+        raise KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        sync_trees(a, b, ItemType.CALENDAR_EVENT, _basic_spec(), session, confirm=confirm)
+
+    # No writes happened — prompt raised before phase 4.
+    assert a.create_item_calls == [] and b.delete_item_calls == []
