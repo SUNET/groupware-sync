@@ -22,6 +22,7 @@ from groupware_sync.models import (
     NodeType,
     SyncItem,
     SyncNode,
+    compute_identity_key,
 )
 from groupware_sync.provider import (
     NotificationCapability,
@@ -251,12 +252,16 @@ class GraphCalendarAdapter(SyncProvider):
                 r.raise_for_status()
                 data = r.json()
                 for event in data.get("value", []):
+                    idk = compute_identity_key(
+                        {"uid": event.get("iCalUId")}, ["uid"]
+                    )
                     leaf = SyncNode(
                         node_id=event["id"],
                         name=event["id"],
                         node_type=NodeType.LEAF,
                         fingerprint=event.get("lastModifiedDateTime", ""),
                         item_type=ItemType.CALENDAR_EVENT,
+                        identity_key=idk,
                     )
                     cal_node.children.append(leaf)
                 next_link = data.get("@odata.nextLink")
