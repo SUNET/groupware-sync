@@ -12,33 +12,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv run ruff check src/ tests/
+      - run: uv run --extra dev ruff check src/ tests/
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv run pytest tests/test_*.py -v
+      - run: uv run --extra dev pytest tests/test_*.py -v
 
   e2e:
     runs-on: ubuntu-latest
-    services:
-      radicale:
-        image: tomsquest/docker-radicale:latest
-        ports:
-          - 15232:5232
-        volumes:
-          - ${{ github.workspace }}/tests/e2e/radicale/config:/config/config
-          - ${{ github.workspace }}/tests/e2e/radicale/users:/config/users
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv run pytest tests/e2e/ -m e2e -v
+      - name: Start Radicale
+        run: |
+          docker run -d --name radicale \
+            -p 15232:5232 \
+            -v "${{ github.workspace }}/tests/e2e/radicale/config:/config/config" \
+            -v "${{ github.workspace }}/tests/e2e/radicale/users:/config/users" \
+            tomsquest/docker-radicale:latest
+      - name: Wait for Radicale
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://localhost:15232/; then
+              echo "Radicale is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Radicale failed to start" >&2
+          docker logs radicale >&2 || true
+          exit 1
+      - run: uv run --extra dev pytest tests/e2e/ -m e2e -v
+      - name: Stop Radicale
+        if: always()
+        run: docker stop radicale || true
 
   vuln-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv run pip-audit
+      - run: uv run --extra dev pip-audit
