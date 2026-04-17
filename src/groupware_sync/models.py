@@ -8,6 +8,7 @@ TypeSpec/FieldDef: per-type merge configuration.
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -54,8 +55,11 @@ def compute_identity_key(
     def canonical(v: object) -> str:
         if isinstance(v, dict):
             v = v.get("value", "")
-        s = str(v).strip().lower()
-        return s
+        # NFC normalize before casefold so visually-identical strings with
+        # different Unicode decompositions hash equally. casefold is stricter
+        # than lower (handles ß → ss etc). Identity values are opaque
+        # identifiers; this is defensive, not free-form text handling.
+        return unicodedata.normalize("NFC", str(v)).strip().casefold()
 
     parts: list[str] = []
     for name in identity_fields:

@@ -53,6 +53,22 @@ def test_multiple_identity_fields_combined():
     assert a == b
 
 
+def test_unicode_nfc_nfd_equivalence():
+    import unicodedata
+    pre = "café"  # pre-composed
+    decomposed = unicodedata.normalize("NFD", pre)
+    assert pre != decomposed  # sanity: different byte sequences
+    a = compute_identity_key({"uid": pre}, ["uid"])
+    b = compute_identity_key({"uid": decomposed}, ["uid"])
+    assert a == b
+
+
+def test_casefold_handles_german_eszett():
+    a = compute_identity_key({"uid": "straße"}, ["uid"])
+    b = compute_identity_key({"uid": "STRASSE"}, ["uid"])
+    assert a == b
+
+
 def test_sync_node_has_identity_key_field():
     from groupware_sync.models import NodeType, SyncNode
     leaf = SyncNode("n", "n", NodeType.LEAF, fingerprint="fp", identity_key="abc")
