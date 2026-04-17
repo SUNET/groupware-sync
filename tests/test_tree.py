@@ -25,11 +25,19 @@ def session():
 
 
 def _make_tree(containers: dict[str, list[tuple[str, str]]]) -> SyncNode:
-    """Helper: build a root with named containers, each with (id, fingerprint) leaves."""
+    """Helper: build a root with named containers, each with (id, fingerprint) leaves.
+
+    identity_key is derived from the leaf id so identity-based pairing works
+    on initial sync with identical IDs on both sides.
+    """
     children = []
     for cname, leaves in containers.items():
         leaf_nodes = [
-            SyncNode(lid, lid, NodeType.LEAF, fingerprint=fp, item_type=ItemType.CONTACT)
+            SyncNode(
+                lid, lid, NodeType.LEAF, fingerprint=fp,
+                identity_key=f"ik:{lid}",
+                item_type=ItemType.CONTACT,
+            )
             for lid, fp in leaves
         ]
         children.append(

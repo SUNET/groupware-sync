@@ -7,12 +7,14 @@ Key behaviors:
   - PRUNE: if the combined Merkle hash of both sides matches the stored hash,
     the entire subtree is skipped.
   - Container matching by name (case-insensitive).
-  - Leaf matching by stored ItemMapping.
+  - Leaf matching by identity_key (stable cross-provider hash).
   - Fingerprint comparison against stored per-side fingerprints.
+  - Safety invariant: no DELETE_ITEM emitted on runs with no cache.
 """
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -25,6 +27,8 @@ from groupware_sync.models import (
     SyncOp,
 )
 from groupware_sync.state import ops
+
+log = logging.getLogger(__name__)
 
 
 def _combine_merkle(hash_a: Optional[str], hash_b: Optional[str]) -> str:
@@ -166,23 +170,61 @@ def _compare_node(
                 _collect_one_side(cb, "a", item_type, prov_b, prov_a, session)
             )
 
-    # --- Match leaves via stored ItemMappings ---
-    existing_mappings = ops.get_all_mappings(session, pair.id)
+    # --- Identity-based leaf pairing ---
+    # Ops from this level's leaves are collected separately so the safety
+    # invariant (no deletes on a run with no prior cache for THIS pair) can
+    # filter them without affecting ops recursed from child containers.
+    leaf_ops: list[SyncOp] = []
 
-    # Build lookup indexes
-    mapped_a_ids: set[str] = set()
-    mapped_b_ids: set[str] = set()
+    by_identity_a: dict[str, SyncNode] = {}
+    unpairable_a: list[SyncNode] = []
+    for leaf in leaves_a.values():
+        if leaf.identity_key:
+            # First occurrence wins on collision within a container
+            by_identity_a.setdefault(leaf.identity_key, leaf)
+        else:
+            unpairable_a.append(leaf)
 
-    for mapping in existing_mappings:
-        a_id = mapping.a_item_id
-        b_id = mapping.b_item_id
-        leaf_a = leaves_a.get(a_id)
-        leaf_b = leaves_b.get(b_id)
+    by_identity_b: dict[str, SyncNode] = {}
+    unpairable_b: list[SyncNode] = []
+    for leaf in leaves_b.values():
+        if leaf.identity_key:
+            by_identity_b.setdefault(leaf.identity_key, leaf)
+        else:
+            unpairable_b.append(leaf)
+
+    cached = ops.get_mappings_by_identity(session, pair.id)
+    had_cache = bool(cached)
+
+    all_keys = set(by_identity_a) | set(by_identity_b) | set(cached)
+    for key in sorted(all_keys):
+        leaf_a = by_identity_a.get(key)
+        leaf_b = by_identity_b.get(key)
+        mapping = cached.get(key)
 
         if leaf_a is not None and leaf_b is not None:
-            # Both present — check fingerprints
-            mapped_a_ids.add(a_id)
-            mapped_b_ids.add(b_id)
+            # Both sides present — pair (merge if drift, silently heal IDs if changed).
+            if mapping is None:
+                ops.create_mapping(
+                    session, pair.id,
+                    leaf_a.node_id, leaf_b.node_id,
+                    identity_key=key,
+                    fingerprint_a=leaf_a.fingerprint,
+                    fingerprint_b=leaf_b.fingerprint,
+                )
+                continue
+
+            if (mapping.a_item_id != leaf_a.node_id
+                    or mapping.b_item_id != leaf_b.node_id):
+                ops.heal_mapping_ids(
+                    session, mapping, leaf_a.node_id, leaf_b.node_id
+                )
+                log.debug(
+                    "healed mapping identity=%s: %s,%s -> %s,%s",
+                    key, mapping.a_item_id, mapping.b_item_id,
+                    leaf_a.node_id, leaf_b.node_id,
+                )
+
             fp_changed_a = (
                 mapping.fingerprint_a is not None
                 and leaf_a.fingerprint != mapping.fingerprint_a
@@ -192,113 +234,137 @@ def _compare_node(
                 and leaf_b.fingerprint != mapping.fingerprint_b
             )
             if fp_changed_a or fp_changed_b:
-                result.append(
+                leaf_ops.append(
                     SyncOp(
                         op_type=OpType.MERGE_ITEM,
                         target_side="both",
-                        node_id=a_id,
-                        paired_node_id=b_id,
+                        node_id=leaf_a.node_id,
+                        paired_node_id=leaf_b.node_id,
                         container_id_a=node_a.node_id,
                         container_id_b=node_b.node_id,
                         item_type=item_type,
+                        identity_key=key,
                     )
                 )
-        elif leaf_a is not None and leaf_b is None:
-            # Gone from B → delete on A (propagate B's deletion)
-            mapped_a_ids.add(a_id)
-            mapped_b_ids.add(b_id)
-            result.append(
-                SyncOp(
-                    op_type=OpType.DELETE_ITEM,
-                    target_side="a",
-                    node_id=a_id,          # target item (on A)
-                    paired_node_id=b_id,   # was on B
-                    container_id_a=node_a.node_id,
-                    container_id_b=node_b.node_id,
-                    item_type=item_type,
+            continue
+
+        if leaf_a is not None and leaf_b is None:
+            # Only on A.
+            if mapping is None:
+                # Never seen before — new item on A → create on B.
+                leaf_ops.append(
+                    SyncOp(
+                        op_type=OpType.CREATE_ITEM,
+                        target_side="b",
+                        node_id=leaf_a.node_id,
+                        container_id_a=node_a.node_id,
+                        container_id_b=node_b.node_id,
+                        item_type=item_type,
+                        identity_key=key,
+                    )
                 )
-            )
-        elif leaf_b is not None and leaf_a is None:
-            # Gone from A → delete on B (propagate A's deletion)
-            mapped_a_ids.add(a_id)
-            mapped_b_ids.add(b_id)
-            result.append(
-                SyncOp(
-                    op_type=OpType.DELETE_ITEM,
-                    target_side="b",
-                    node_id=b_id,          # target item (on B)
-                    paired_node_id=a_id,   # was on A
-                    container_id_a=node_a.node_id,
-                    container_id_b=node_b.node_id,
-                    item_type=item_type,
+            else:
+                # We saw it before and it's gone from B → propagate delete to A.
+                leaf_ops.append(
+                    SyncOp(
+                        op_type=OpType.DELETE_ITEM,
+                        target_side="a",
+                        node_id=leaf_a.node_id,
+                        paired_node_id=mapping.b_item_id,
+                        container_id_a=node_a.node_id,
+                        container_id_b=node_b.node_id,
+                        item_type=item_type,
+                        identity_key=key,
+                    )
                 )
-            )
-        else:
-            # Both gone — cleanup mapping
-            mapped_a_ids.add(a_id)
-            mapped_b_ids.add(b_id)
-            result.append(
+            continue
+
+        if leaf_b is not None and leaf_a is None:
+            # Symmetric.
+            if mapping is None:
+                leaf_ops.append(
+                    SyncOp(
+                        op_type=OpType.CREATE_ITEM,
+                        target_side="a",
+                        node_id=leaf_b.node_id,
+                        container_id_a=node_a.node_id,
+                        container_id_b=node_b.node_id,
+                        item_type=item_type,
+                        identity_key=key,
+                    )
+                )
+            else:
+                leaf_ops.append(
+                    SyncOp(
+                        op_type=OpType.DELETE_ITEM,
+                        target_side="b",
+                        node_id=leaf_b.node_id,
+                        paired_node_id=mapping.a_item_id,
+                        container_id_a=node_a.node_id,
+                        container_id_b=node_b.node_id,
+                        item_type=item_type,
+                        identity_key=key,
+                    )
+                )
+            continue
+
+        # Neither side has it, but cache does → both-gone cleanup.
+        if mapping is not None:
+            leaf_ops.append(
                 SyncOp(
                     op_type=OpType.DELETE_ITEM,
                     target_side="both",
-                    node_id=a_id,
-                    paired_node_id=b_id,
+                    node_id=mapping.a_item_id,
+                    paired_node_id=mapping.b_item_id,
                     container_id_a=node_a.node_id,
                     container_id_b=node_b.node_id,
                     item_type=item_type,
+                    identity_key=key,
                 )
             )
             ops.delete_mapping(session, mapping)
 
-    # --- Unmatched leaves ---
-    # First, pair up leaves that exist on both sides by node_id (initial sync).
-    # These already exist on both providers, so we create a mapping and check
-    # fingerprints rather than generating CREATE ops.
-    unmatched_a = {lid for lid in leaves_a if lid not in mapped_a_ids}
-    unmatched_b = {lid for lid in leaves_b if lid not in mapped_b_ids}
-    paired_by_id = unmatched_a & unmatched_b
-
-    for leaf_id in paired_by_id:
-        leaf_a = leaves_a[leaf_id]
-        leaf_b = leaves_b[leaf_id]
-        # Create a mapping to record that these items are paired
-        ops.create_mapping(
-            session,
-            pair.id,
-            leaf_id,
-            leaf_id,
-            # Placeholder: IP-9 will wire the real identity_key from
-            # SyncOp.identity_key. Using leaf_id keeps uniqueness within
-            # a pair so the uq_mapping_identity constraint is satisfied.
-            identity_key=f"legacy:{leaf_id}",
-            fingerprint_a=leaf_a.fingerprint,
-            fingerprint_b=leaf_b.fingerprint,
-        )
-
-    # Leaves only on A (no match on B) → CREATE_ITEM on B
-    for leaf_id in sorted(unmatched_a - paired_by_id):
-        result.append(
+    # Unpairable leaves: always create on the other side. Legacy identity
+    # matching in _execute_creates catches duplicates during execution.
+    for leaf in unpairable_a:
+        leaf_ops.append(
             SyncOp(
                 op_type=OpType.CREATE_ITEM,
                 target_side="b",
-                node_id=leaf_id,
+                node_id=leaf.node_id,
                 container_id_a=node_a.node_id,
                 container_id_b=node_b.node_id,
                 item_type=item_type,
+                identity_key=None,
             )
         )
-    # Leaves only on B (no match on A) → CREATE_ITEM on A
-    for leaf_id in sorted(unmatched_b - paired_by_id):
-        result.append(
+    for leaf in unpairable_b:
+        leaf_ops.append(
             SyncOp(
                 op_type=OpType.CREATE_ITEM,
                 target_side="a",
-                node_id=leaf_id,
+                node_id=leaf.node_id,
                 container_id_a=node_a.node_id,
                 container_id_b=node_b.node_id,
                 item_type=item_type,
+                identity_key=None,
             )
         )
+
+    # --- Safety invariant: no deletes on a run with no prior cache. ---
+    # Scoped to THIS pair's leaf ops only; child-container ops are unaffected.
+    if not had_cache:
+        pre_count = sum(
+            1 for op in leaf_ops if op.op_type == OpType.DELETE_ITEM
+        )
+        if pre_count:
+            log.warning(
+                "no cache present for pair %s — suppressing %d planned deletes "
+                "(cache being rebuilt this run)", pair.id, pre_count,
+            )
+            leaf_ops = [op for op in leaf_ops if op.op_type != OpType.DELETE_ITEM]
+
+    result.extend(leaf_ops)
 
     # --- Update stored Merkle hash ---
     combined = _combine_merkle(node_a.merkle_hash, node_b.merkle_hash)
