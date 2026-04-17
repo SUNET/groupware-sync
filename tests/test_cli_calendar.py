@@ -1,7 +1,6 @@
 """CLI tests for groupware-sync-calendar: flag matrix and TTY guard."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from unittest.mock import patch
 
 import pytest
@@ -51,15 +50,20 @@ def stub_engine(monkeypatch):
     monkeypatch.setattr("groupware_sync_calendar.adapters.jmap_adapter.JmapCalendarAdapter.close", lambda self: None)
     monkeypatch.setattr("groupware_sync_calendar.adapters.graph_adapter.GraphCalendarAdapter.__init__", lambda self, *a, **kw: None)
     monkeypatch.setattr("groupware_sync_calendar.adapters.graph_adapter.GraphCalendarAdapter.close", lambda self: None)
-    monkeypatch.setattr("groupware_sync.state.db.make_session_factory", lambda url: lambda: _FakeSession(), raising=False)
+    # Patch the symbol on the CLI module (where it's used), not on the source,
+    # because the CLI imports it at module top so the name is bound locally.
+    class _FakeSession:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def commit(self): pass
+        def close(self): pass
+
+    monkeypatch.setattr(
+        "groupware_sync_calendar.cli.make_session_factory",
+        lambda url: lambda: _FakeSession(),
+        raising=False,
+    )
     return calls
-
-
-class _FakeSession:
-    def __enter__(self): return self
-    def __exit__(self, *a): return False
-    def commit(self): pass
-    def close(self): pass
 
 
 def test_non_tty_without_flags_exits_2(monkeypatch, stub_engine):
@@ -99,3 +103,35 @@ def test_default_tty_passes_confirm_callback(monkeypatch, stub_engine):
     assert result.exit_code == 0
     assert stub_engine["dry_run"] is False
     assert callable(stub_engine["confirm"])
+
+
+def test_aborted_summary_exits_zero_with_message(monkeypatch):
+    """When the engine returns summary.aborted=True (user declined the
+    interactive prompt), the CLI prints a friendly message and exits 0."""
+    def fake_sync_trees(a, b, item_type, type_spec, session, dry_run=False, confirm=None):
+        return SyncSummary(aborted=True)
+
+    monkeypatch.setattr("groupware_sync_calendar.cli.Config.from_env", classmethod(lambda cls: _fake_cfg()))
+    monkeypatch.setattr("groupware_sync_calendar.cli.sync_trees", fake_sync_trees, raising=False)
+    monkeypatch.setattr("groupware_sync_calendar.cli.fw_auth.get_access_token", lambda *a, **kw: "token", raising=False)
+    monkeypatch.setattr("groupware_sync_calendar.adapters.jmap_adapter.JmapCalendarAdapter.__init__", lambda self, *a, **kw: None)
+    monkeypatch.setattr("groupware_sync_calendar.adapters.jmap_adapter.JmapCalendarAdapter.close", lambda self: None)
+    monkeypatch.setattr("groupware_sync_calendar.adapters.graph_adapter.GraphCalendarAdapter.__init__", lambda self, *a, **kw: None)
+    monkeypatch.setattr("groupware_sync_calendar.adapters.graph_adapter.GraphCalendarAdapter.close", lambda self: None)
+
+    class _FakeSession:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def commit(self): pass
+        def close(self): pass
+
+    monkeypatch.setattr(
+        "groupware_sync_calendar.cli.make_session_factory",
+        lambda url: lambda: _FakeSession(),
+        raising=False,
+    )
+
+    with patch("groupware_sync_calendar.cli._stdin_isatty", return_value=True):
+        result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+    assert "aborted by user" in result.stdout
