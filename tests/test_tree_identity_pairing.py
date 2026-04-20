@@ -48,7 +48,7 @@ def test_matched_identity_no_cache_creates_mapping_no_op(session):
     """First sync: identity matches on both sides → create mapping, no item ops."""
     a = _make_tree([("a1", "fpa", "k1")])
     b = _make_tree([("b1", "fpb", "k1")])
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
 
     item_ops = [o for o in ops_list
                 if o.op_type in (OpType.CREATE_ITEM, OpType.DELETE_ITEM,
@@ -73,7 +73,7 @@ def test_matched_identity_fingerprint_changed_merges(session):
 
     a = _make_tree([("a1", "fpa-new", "k1")])
     b = _make_tree([("b1", "fpb-old", "k1")])
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
     merges = [o for o in ops_list if o.op_type == OpType.MERGE_ITEM]
     assert len(merges) == 1
     assert merges[0].identity_key == "k1"
@@ -91,7 +91,7 @@ def test_mapping_ids_healed_on_drift(session):
 
     a = _make_tree([("new-a", "fpa", "k1")])
     b = _make_tree([("new-b", "fpb", "k1")])
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
     item_ops = [o for o in ops_list if o.op_type in
                 (OpType.DELETE_ITEM, OpType.CREATE_ITEM, OpType.MERGE_ITEM)]
     assert item_ops == []
@@ -105,7 +105,7 @@ def test_identity_only_on_a_no_cache_creates_on_b(session):
     """No cache, item only on A → CREATE on B."""
     a = _make_tree([("a1", "fpa", "k1")])
     b = _make_tree([])
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
     creates = [o for o in ops_list if o.op_type == OpType.CREATE_ITEM]
     assert len(creates) == 1
     assert creates[0].target_side == "b"
@@ -123,7 +123,7 @@ def test_identity_only_on_a_with_cache_deletes_on_a(session):
 
     a = _make_tree([("a1", "fpa", "k1")])
     b = _make_tree([])  # gone from B
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
     deletes = [o for o in ops_list if o.op_type == OpType.DELETE_ITEM]
     assert len(deletes) == 1
     assert deletes[0].target_side == "a"
@@ -137,7 +137,7 @@ def test_safety_invariant_suppresses_deletes_on_empty_cache(session):
     a = _make_tree([("a1", "fpa", "k1"), ("a2", "fpa", "k2")])
     b = _make_tree([("b1", "fpb", "k1")])  # k2 not yet on B
 
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
     deletes = [o for o in ops_list if o.op_type == OpType.DELETE_ITEM]
     assert deletes == [], f"safety invariant violated: {deletes!r}"
 
@@ -158,7 +158,7 @@ def test_both_gone_emits_cleanup_delete(session):
 
     a = _make_tree([])
     b = _make_tree([])
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
     both_gone = [o for o in ops_list if o.op_type == OpType.DELETE_ITEM
                  and o.target_side == "both"]
     assert len(both_gone) == 1
@@ -176,9 +176,31 @@ def test_unpairable_leaf_creates_on_other_side(session):
 
     a = _make_tree([("a0", "fpa", "k0"), ("aX", "fp", None)])  # aX has no id key
     b = _make_tree([("b0", "fpb", "k0")])
-    ops_list = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
+    ops_list, _ = compare_trees(a, b, "a", "b", ItemType.CALENDAR_EVENT, session)
     creates = [o for o in ops_list if o.op_type == OpType.CREATE_ITEM]
     assert len(creates) == 1
     assert creates[0].node_id == "aX"
     assert creates[0].target_side == "b"
     assert creates[0].identity_key is None
+
+
+def test_heal_count_surfaces_via_return(session):
+    """compare_trees returns (ops, healed_count) as a tuple; the engine
+    aggregates the count into SyncSummary.identity_pairs_healed."""
+    pair = _pair(session)
+    ops.create_mapping(
+        session, pair.id, "old-a", "old-b", identity_key="k1",
+        fingerprint_a="fpa", fingerprint_b="fpb",
+    )
+    session.flush()
+
+    a = _make_tree([("new-a", "fpa", "k1")])
+    b = _make_tree([("new-b", "fpb", "k1")])
+    result = compare_trees(
+        a, b, "a", "b", ItemType.CALENDAR_EVENT, session
+    )
+    # Result must be a (ops, healed_count) tuple
+    assert isinstance(result, tuple), "compare_trees must return a tuple"
+    ops_list, healed = result
+    assert healed == 1
+    assert isinstance(ops_list, list)

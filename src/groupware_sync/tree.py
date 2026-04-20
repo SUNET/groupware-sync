@@ -44,8 +44,8 @@ def compare_trees(
     provider_b_name: str,
     item_type: ItemType,
     session: Session,
-) -> list[SyncOp]:
-    """Entry point: compare two provider trees and return sync operations."""
+) -> tuple[list[SyncOp], int]:
+    """Entry point: compare two provider trees, return (ops, healed_count)."""
     return _compare_node(
         node_a, node_b, provider_a_name, provider_b_name, item_type, session
     )
@@ -58,17 +58,18 @@ def _compare_node(
     prov_b: str,
     item_type: ItemType,
     session: Session,
-) -> list[SyncOp]:
+) -> tuple[list[SyncOp], int]:
     """Recursively compare two nodes and produce sync operations."""
     result: list[SyncOp] = []
+    healed = 0
 
     # --- One side only ---
     if node_a is not None and node_b is None:
-        return _collect_one_side(node_a, "b", item_type, prov_a, prov_b, session)
+        return _collect_one_side(node_a, "b", item_type, prov_a, prov_b, session), 0
     if node_b is not None and node_a is None:
-        return _collect_one_side(node_b, "a", item_type, prov_b, prov_a, session)
+        return _collect_one_side(node_b, "a", item_type, prov_b, prov_a, session), 0
     if node_a is None and node_b is None:
-        return result
+        return result, 0
 
     # Both exist — must both be containers at the top level of recursion
     if node_a is None or node_b is None:
@@ -94,7 +95,7 @@ def _compare_node(
                     item_type=item_type,
                 )
             )
-            return result
+            return result, healed
 
     # --- Get or create the pair ---
     pair = ops.get_or_create_pair(
@@ -136,9 +137,11 @@ def _compare_node(
         cb = containers_b.get(cname)
         if ca is not None and cb is not None:
             # Both sides have this container — recurse
-            result.extend(
-                _compare_node(ca, cb, prov_a, prov_b, item_type, session)
+            child_ops, child_healed = _compare_node(
+                ca, cb, prov_a, prov_b, item_type, session
             )
+            result.extend(child_ops)
+            healed += child_healed
         elif ca is not None and cb is None:
             # Container only on A — create on B, then recurse its children
             result.append(
@@ -219,6 +222,7 @@ def _compare_node(
                 ops.heal_mapping_ids(
                     session, mapping, leaf_a.node_id, leaf_b.node_id
                 )
+                healed += 1
                 log.debug(
                     "healed mapping identity=%s: %s,%s -> %s,%s",
                     key, mapping.a_item_id, mapping.b_item_id,
@@ -370,7 +374,7 @@ def _compare_node(
     combined = _combine_merkle(node_a.merkle_hash, node_b.merkle_hash)
     ops.update_merkle(session, pair.id, combined)
 
-    return result
+    return result, healed
 
 
 def _collect_one_side(

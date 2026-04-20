@@ -91,9 +91,12 @@ def sync_trees(
 
     # Phase 3 — Compare trees
     log.info("Phase 3: comparing trees")
-    operations = compare_trees(
+    operations, healed_count = compare_trees(
         tree_a, tree_b, provider_a.name, provider_b.name, item_type, session
     )
+    summary.identity_pairs_healed += healed_count
+    if healed_count:
+        log.info("Healed %d stale mapping(s) by identity", healed_count)
     log.info("Phase 3 produced %d operations", len(operations))
 
     if dry_run:
@@ -718,9 +721,9 @@ def _execute_creates(
             pair.id,
             a_id,
             b_id,
-            # Placeholder: IP-9 wires the real identity_key from SyncOp.
-            # Using a_id keeps uniqueness within a pair.
-            identity_key=f"legacy:{a_id}",
+            identity_key=(
+                op_a.identity_key or op_b.identity_key or f"legacy:{a_id}"
+            ),
             fingerprint_a=new_fp_a,
             fingerprint_b=new_fp_b,
         )
@@ -760,9 +763,7 @@ def _execute_creates(
             pair.id,
             a_id,
             new_b_id,
-            # Placeholder: IP-9 wires the real identity_key from SyncOp.
-            # Using a_id keeps uniqueness within a pair.
-            identity_key=f"legacy:{a_id}",
+            identity_key=op.identity_key or f"legacy:{a_id}",
             fingerprint_a=item_a.fingerprint,
             fingerprint_b=new_b_fp,
         )
@@ -801,9 +802,7 @@ def _execute_creates(
             pair.id,
             new_a_id,
             b_id,
-            # Placeholder: IP-9 wires the real identity_key from SyncOp.
-            # Using b_id keeps uniqueness within a pair.
-            identity_key=f"legacy:{b_id}",
+            identity_key=op.identity_key or f"legacy:{b_id}",
             fingerprint_a=new_a_fp,
             fingerprint_b=item_b.fingerprint,
         )

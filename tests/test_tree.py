@@ -60,7 +60,7 @@ def test_identical_trees_produce_skip(session):
     # Second sync: stored state matches → should prune
     tree_a2 = _make_tree({"contacts": [("c1", "fp1"), ("c2", "fp2")]})
     tree_b2 = _make_tree({"contacts": [("c1", "fp1"), ("c2", "fp2")]})
-    ops_list2 = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
+    ops_list2, _ = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
 
     skip_ops = [op for op in ops_list2 if op.op_type == OpType.SKIP_SUBTREE]
     assert len(skip_ops) > 0
@@ -71,7 +71,7 @@ def test_new_leaf_on_a_creates_on_b(session):
     tree_a = _make_tree({"contacts": [("c1", "fp1"), ("c2", "fp2")]})
     tree_b = _make_tree({"contacts": [("c1", "fp1")]})
 
-    ops_list = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
+    ops_list, _ = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
     creates = [op for op in ops_list if op.op_type == OpType.CREATE_ITEM and op.target_side == "b"]
     assert any(op.node_id == "c2" for op in creates)
 
@@ -80,7 +80,7 @@ def test_new_leaf_on_b_creates_on_a(session):
     tree_a = _make_tree({"contacts": [("c1", "fp1")]})
     tree_b = _make_tree({"contacts": [("c1", "fp1"), ("c2", "fp2")]})
 
-    ops_list = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
+    ops_list, _ = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
     creates = [op for op in ops_list if op.op_type == OpType.CREATE_ITEM and op.target_side == "a"]
     assert any(op.node_id == "c2" for op in creates)
 
@@ -97,7 +97,7 @@ def test_deleted_on_a_deletes_on_b(session):
     # Second sync: c2 gone from A
     tree_a2 = _make_tree({"contacts": [("c1", "fp1")]})
     tree_b2 = _make_tree({"contacts": [("c1", "fp1"), ("c2", "fp2")]})
-    ops2 = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
+    ops2, _ = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
 
     deletes = [op for op in ops2 if op.op_type == OpType.DELETE_ITEM]
     assert any(op.target_side == "b" for op in deletes)
@@ -115,7 +115,7 @@ def test_fingerprint_change_triggers_merge(session):
     # Second sync: c1 fingerprint changed on A
     tree_a2 = _make_tree({"contacts": [("c1", "fp1_changed")]})
     tree_b2 = _make_tree({"contacts": [("c1", "fp1")]})
-    ops2 = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
+    ops2, _ = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
 
     merges = [op for op in ops2 if op.op_type == OpType.MERGE_ITEM]
     assert len(merges) == 1
@@ -126,7 +126,7 @@ def test_new_container_on_a_creates_on_b(session):
     tree_a = _make_tree({"contacts": [("c1", "fp1")], "work": [("c2", "fp2")]})
     tree_b = _make_tree({"contacts": [("c1", "fp1")]})
 
-    ops_list = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
+    ops_list, _ = compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
     container_creates = [op for op in ops_list if op.op_type == OpType.CREATE_CONTAINER]
     assert any(op.target_side == "b" for op in container_creates)
 
@@ -140,6 +140,6 @@ def test_both_deleted_cleans_up(session):
 
     tree_a2 = _make_tree({"contacts": []})
     tree_b2 = _make_tree({"contacts": []})
-    ops2 = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
+    ops2, _ = compare_trees(tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session)
     deletes = [op for op in ops2 if op.op_type == OpType.DELETE_ITEM and op.target_side == "both"]
     assert len(deletes) == 1
