@@ -23,7 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 
-SCHEMA_VERSION = "2-identity-pairing"
+SCHEMA_VERSION = "3-rebuild-all"
 
 
 class Base(DeclarativeBase):
@@ -125,17 +125,21 @@ class SchemaMeta(Base):
 
 
 def _drop_cache_tables_if_stale(engine) -> None:
-    """Drop item_mapping + item_snapshot when their shape is incompatible.
+    """Drop every cache table when the stored shape is incompatible.
 
     Runs before create_all. Triggers in two cases:
     1. Pre-versioning DB (no schema_meta): if item_mapping exists and
        lacks the identity_key column, it's from before IP-3 and must go.
     2. Versioned DB with a non-matching schema_meta row: future upgrades.
 
-    create_all then recreates the dropped tables with the current shape.
-    NodePair and SyncCursor (structural, rebuildable-adjacent) survive.
-    The tree comparison's safety invariant ensures the first post-rebuild
-    sync plans no deletes.
+    All four cache tables (item_snapshot, item_mapping, sync_cursor,
+    node_pair) are dropped together. They are fully reconstructible from
+    the providers on the next sync, and keeping partial state behind
+    confuses the adapter's state-skip path (a surviving sync_cursor +
+    node_pair tricks build_tree into skipping container children, which
+    then produces a tree with zero leaves that can never pair against
+    the other side's fresh tree). The tree comparison's safety invariant
+    ensures the first post-rebuild sync plans no deletes.
     """
     insp = inspect(engine)
     should_drop = False
@@ -164,6 +168,8 @@ def _drop_cache_tables_if_stale(engine) -> None:
     with engine.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS item_snapshot"))
         conn.execute(text("DROP TABLE IF EXISTS item_mapping"))
+        conn.execute(text("DROP TABLE IF EXISTS sync_cursor"))
+        conn.execute(text("DROP TABLE IF EXISTS node_pair"))
 
 
 def _ensure_schema_version(engine) -> None:

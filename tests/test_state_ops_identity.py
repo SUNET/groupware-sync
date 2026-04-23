@@ -102,8 +102,9 @@ def test_heal_mapping_ids_updates_provider_ids(session):
 
 def test_cache_rebuild_on_schema_version_mismatch(tmp_path):
     """Simulate an older schema by stamping a different version, then
-    re-opening the DB. Mappings should be cleared; NodePairs should
-    survive."""
+    re-opening the DB. All cache tables (mappings, pairs, cursors)
+    should be cleared — they are reconstructible from the providers,
+    and a partial carry-over confuses the adapter state-skip path."""
     db_path = tmp_path / "old.db"
 
     # First session: populate
@@ -122,13 +123,14 @@ def test_cache_rebuild_on_schema_version_mismatch(tmp_path):
     s.commit()
     s.close()
 
-    # Second session: factory should detect mismatch and rebuild mappings
+    # Second session: factory should detect mismatch and rebuild all cache
     sf2 = make_session_factory(f"sqlite:///{db_path}")
     s2 = sf2()
-    mappings = s2.query(ItemMapping).all()
-    assert mappings == [], "mappings should be rebuilt on version mismatch"
-    pairs = s2.query(NodePair).all()
-    assert len(pairs) == 1, "NodePairs should survive"
+    assert s2.query(ItemMapping).all() == [], "mappings should be rebuilt"
+    assert s2.query(NodePair).all() == [], (
+        "NodePairs must be rebuilt too — a surviving pair carries a "
+        "merkle_hash that can mislead the adapter's state-skip path"
+    )
     row = s2.execute(text("SELECT version FROM schema_meta")).first()
     assert row[0] == SCHEMA_VERSION
     s2.close()
@@ -255,10 +257,9 @@ def test_upgrade_from_pre_versioning_db_drops_old_item_mapping(tmp_path):
         "identity_key column missing — factory didn't migrate the legacy table"
     )
 
-    # Cache rebuilt — no mappings
+    # All cache tables rebuilt — nothing from the legacy DB survives
     assert s.query(ItemMapping).all() == []
-    # Structural data (NodePairs) preserved
-    assert len(s.query(NodePair).all()) == 1
+    assert s.query(NodePair).all() == []
     # Schema stamped
     version_row = s.execute(text("SELECT version FROM schema_meta")).first()
     assert version_row[0] == SCHEMA_VERSION
