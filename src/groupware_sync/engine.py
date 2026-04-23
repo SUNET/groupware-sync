@@ -7,6 +7,7 @@ deletes) while maintaining the state DB.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import sys
 from collections import defaultdict
@@ -590,6 +591,17 @@ def _merge_one(
 # ---------------------------------------------------------------------------
 
 
+def _legacy_identity_key(*parts: str) -> str:
+    """Deterministic 64-hex fallback key for leaves without a real identity.
+
+    Kept distinct from real identity-keyed mappings by namespacing with
+    'legacy' inside the hash input. Fits the ItemMapping.identity_key
+    VARCHAR(64) column on MySQL/Postgres.
+    """
+    raw = "|".join(("legacy", *parts))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def _execute_creates(
     create_ops: list[SyncOp],
     provider_a: SyncProvider,
@@ -722,7 +734,9 @@ def _execute_creates(
             a_id,
             b_id,
             identity_key=(
-                op_a.identity_key or op_b.identity_key or f"legacy:{a_id}"
+                op_a.identity_key
+                or op_b.identity_key
+                or _legacy_identity_key(a_id, b_id)
             ),
             fingerprint_a=new_fp_a,
             fingerprint_b=new_fp_b,
@@ -763,7 +777,7 @@ def _execute_creates(
             pair.id,
             a_id,
             new_b_id,
-            identity_key=op.identity_key or f"legacy:{a_id}",
+            identity_key=op.identity_key or _legacy_identity_key(a_id, new_b_id),
             fingerprint_a=item_a.fingerprint,
             fingerprint_b=new_b_fp,
         )
@@ -802,7 +816,7 @@ def _execute_creates(
             pair.id,
             new_a_id,
             b_id,
-            identity_key=op.identity_key or f"legacy:{b_id}",
+            identity_key=op.identity_key or _legacy_identity_key(new_a_id, b_id),
             fingerprint_a=new_a_fp,
             fingerprint_b=item_b.fingerprint,
         )

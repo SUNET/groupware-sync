@@ -184,6 +184,30 @@ def test_unpairable_leaf_creates_on_other_side(session):
     assert creates[0].identity_key is None
 
 
+def test_duplicate_identity_keys_within_container_demoted_to_unpairable(session):
+    """Two leaves on the same side sharing an identity_key are routed to
+    the unpairable path instead of one silently winning (which would drop
+    the other entirely, missing creates/deletes/merges)."""
+    a = _make_tree([
+        ("a1", "fp1", "dup-key"),
+        ("a2", "fp2", "dup-key"),
+        ("a3", "fp3", "unique-key"),
+    ])
+    b = _make_tree([])
+
+    ops_result, healed = compare_trees(
+        a, b, "a", "b", ItemType.CALENDAR_EVENT, session
+    )
+
+    # No cache, safety invariant suppresses deletes. We expect three
+    # CREATE_ITEMs (both collider leaves + the unique-key one), all
+    # targeting side b.
+    creates = [op for op in ops_result if op.op_type == OpType.CREATE_ITEM]
+    assert {op.node_id for op in creates} == {"a1", "a2", "a3"}
+    assert all(op.target_side == "b" for op in creates)
+    assert healed == 0
+
+
 def test_heal_count_surfaces_via_return(session):
     """compare_trees returns (ops, healed_count) as a tuple; the engine
     aggregates the count into SyncSummary.identity_pairs_healed."""

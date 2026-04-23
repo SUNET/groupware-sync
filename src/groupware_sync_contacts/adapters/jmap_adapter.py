@@ -176,6 +176,13 @@ class JmapContactAdapter(SyncProvider):
                 for result in get_results:
                     if result[0] == "ContactCard/get":
                         for card in result[1].get("list", []):
+                            # identity_key=None is deliberate: contacts
+                            # lack a single cross-provider stable ID the
+                            # way calendar events have iCalUId/uid. Picking
+                            # one (emails+full_name hash etc.) needs its
+                            # own spec. Until then, cross-provider pairs
+                            # (JMAP↔Graph) fall through the unpairable
+                            # path; same-provider pairs still work.
                             leaf = SyncNode(
                                 node_id=card["id"],
                                 name=card["id"],

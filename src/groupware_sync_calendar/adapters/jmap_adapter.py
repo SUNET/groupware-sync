@@ -204,21 +204,37 @@ class JmapCalendarAdapter(SyncProvider):
         """Query all CalendarEvents account-wide, then attach each as a
         leaf under the calendar nodes it belongs to (via calendarIds).
         Events in calendars we didn't build nodes for are ignored."""
-        query_results = self._call([
-            [
-                "CalendarEvent/query",
-                {"accountId": self._account_id},
-                "q0",
-            ],
-        ])
+        # JMAP servers MAY cap query responses, so paginate until we see
+        # a short page. maxObjectsInGet is the server's hard limit for
+        # get responses; query responses have their own limits but using
+        # the same batch bound is a safe upper bound and lets us keep one
+        # knob.
+        batch = max(1, self._max_objects_in_get)
         event_ids: list[str] = []
-        for result in query_results:
-            if result[0] == "CalendarEvent/query":
-                event_ids = result[1].get("ids", [])
+        position = 0
+        while True:
+            query_results = self._call([
+                [
+                    "CalendarEvent/query",
+                    {
+                        "accountId": self._account_id,
+                        "position": position,
+                        "limit": batch,
+                    },
+                    "q0",
+                ],
+            ])
+            page_ids: list[str] = []
+            for result in query_results:
+                if result[0] == "CalendarEvent/query":
+                    page_ids = result[1].get("ids", [])
+                    break
+            event_ids.extend(page_ids)
+            if len(page_ids) < batch:
+                break
+            position += len(page_ids)
         if not event_ids:
             return
-
-        batch = max(1, self._max_objects_in_get)
         for i in range(0, len(event_ids), batch):
             chunk = event_ids[i:i + batch]
             get_results = self._call([

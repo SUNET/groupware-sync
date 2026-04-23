@@ -54,7 +54,12 @@ def compute_identity_key(
     """
     def canonical(v: object) -> str:
         if isinstance(v, dict):
-            v = v.get("value", "")
+            v = v.get("value")
+        # Treat None as empty: a list entry shaped {"value": None} or a
+        # dict field that's simply absent must not turn into the string
+        # "None" and generate a spurious identity key.
+        if v is None:
+            return ""
         # NFC normalize before casefold so visually-identical strings with
         # different Unicode decompositions hash equally. casefold is stricter
         # than lower (handles ß → ss etc). Identity values are opaque

@@ -63,6 +63,22 @@ def test_unicode_nfc_nfd_equivalence():
     assert a == b
 
 
+def test_dict_value_none_does_not_produce_spurious_key():
+    """Dict entries shaped {"value": None} must normalize to empty,
+    not to the string "None" — otherwise compute_identity_key would
+    return a non-None hash for missing data and accidentally pair
+    unrelated records."""
+    assert compute_identity_key({"emails": [{"value": None}]}, ["emails"]) is None
+    assert compute_identity_key({"uid": {"value": None}}, ["uid"]) is None
+    # Sanity: mixed list with one real value still produces a key
+    a = compute_identity_key(
+        {"emails": [{"value": None}, {"value": "a@b.c"}]},
+        ["emails"],
+    )
+    b = compute_identity_key({"emails": [{"value": "a@b.c"}]}, ["emails"])
+    assert a == b
+
+
 def test_casefold_handles_german_eszett():
     a = compute_identity_key({"uid": "straße"}, ["uid"])
     b = compute_identity_key({"uid": "STRASSE"}, ["uid"])

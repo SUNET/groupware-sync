@@ -110,11 +110,14 @@ def test_events_bucketed_by_calendar_ids_no_inCalendars_filter():
     assert {c.node_id for c in cal_by_id["cal_b"].children} == {"e2"}
 
 
-def test_events_batched_by_max_objects_in_get():
-    """Stalwart rejects oversized CalendarEvent/get calls with
-    requestTooLarge. The adapter must chunk get requests according to
-    maxObjectsInGet from the JMAP session.
+def test_events_paginated_and_batched_by_max_objects_in_get():
+    """Both CalendarEvent/query (pagination) and CalendarEvent/get
+    (batching) respect maxObjectsInGet. The query mock honours
+    position+limit so we can verify the adapter advances the cursor
+    and stops on a short page rather than assuming a single response.
     """
+    all_ids = [f"e{i}" for i in range(250)]
+    query_windows: list[tuple[int, int]] = []
     get_call_sizes: list[int] = []
 
     def fake_call(self, methods):  # noqa: ANN001
@@ -126,7 +129,11 @@ def test_events_batched_by_max_objects_in_get():
             if name == "Calendar/get":
                 out.append([name, {"list": [{"id": "cal1", "name": "K"}]}, cid])
             elif name == "CalendarEvent/query":
-                out.append([name, {"ids": [f"e{i}" for i in range(250)]}, cid])
+                position = args.get("position", 0)
+                limit = args.get("limit", len(all_ids))
+                page = all_ids[position:position + limit]
+                query_windows.append((position, len(page)))
+                out.append([name, {"ids": page}, cid])
             elif name == "CalendarEvent/get":
                 ids = args.get("ids", [])
                 get_call_sizes.append(len(ids))
@@ -143,6 +150,9 @@ def test_events_batched_by_max_objects_in_get():
         with patch.object(JmapCalendarAdapter, "_get_events_state", return_value=None):
             root = adapter.build_tree(ItemType.CALENDAR_EVENT)
 
+    assert query_windows == [(0, 100), (100, 100), (200, 50)], (
+        f"expected 3 paginated query windows, got {query_windows}"
+    )
     assert get_call_sizes == [100, 100, 50], (
         f"expected 3 batched gets of 100, 100, 50, got {get_call_sizes}"
     )

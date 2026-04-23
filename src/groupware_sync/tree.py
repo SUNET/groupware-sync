@@ -179,22 +179,37 @@ def _compare_node(
     # filter them without affecting ops recursed from child containers.
     leaf_ops: list[SyncOp] = []
 
-    by_identity_a: dict[str, SyncNode] = {}
-    unpairable_a: list[SyncNode] = []
-    for leaf in leaves_a.values():
-        if leaf.identity_key:
-            # First occurrence wins on collision within a container
-            by_identity_a.setdefault(leaf.identity_key, leaf)
-        else:
-            unpairable_a.append(leaf)
+    # Route leaves into "paired by identity" vs "unpairable" buckets.
+    # Collisions within a container (two leaves with the same identity_key)
+    # are demoted to unpairable: picking "first wins" silently drops the
+    # extra leaf, which would miss deletes/merges. Treating all colliders
+    # as unpairable means they take the create-only path, which is safe.
+    def _bucket(leaves: dict, side: str) -> tuple[dict[str, SyncNode], list[SyncNode]]:
+        by_identity: dict[str, SyncNode] = {}
+        collisions: dict[str, list[SyncNode]] = {}
+        for leaf in leaves.values():
+            if not leaf.identity_key:
+                continue
+            key = leaf.identity_key
+            if key in by_identity:
+                collisions.setdefault(key, [by_identity[key]]).append(leaf)
+            else:
+                by_identity[key] = leaf
+        unpairable: list[SyncNode] = [
+            leaf for leaf in leaves.values() if not leaf.identity_key
+        ]
+        for key, group in collisions.items():
+            log.warning(
+                "side %s: identity_key %s shared by %d leaves (%s) — "
+                "demoting to unpairable",
+                side, key, len(group), [leaf.node_id for leaf in group],
+            )
+            by_identity.pop(key, None)
+            unpairable.extend(group)
+        return by_identity, unpairable
 
-    by_identity_b: dict[str, SyncNode] = {}
-    unpairable_b: list[SyncNode] = []
-    for leaf in leaves_b.values():
-        if leaf.identity_key:
-            by_identity_b.setdefault(leaf.identity_key, leaf)
-        else:
-            unpairable_b.append(leaf)
+    by_identity_a, unpairable_a = _bucket(leaves_a, "a")
+    by_identity_b, unpairable_b = _bucket(leaves_b, "b")
 
     cached = ops.get_mappings_by_identity(session, pair.id)
     had_cache = bool(cached)
@@ -230,13 +245,16 @@ def _compare_node(
 
             if (mapping.a_item_id != leaf_a.node_id
                     or mapping.b_item_id != leaf_b.node_id):
+                # Capture before heal_mapping_ids mutates the row, so the
+                # log line shows old→new rather than new→new.
+                old_a_id, old_b_id = mapping.a_item_id, mapping.b_item_id
                 ops.heal_mapping_ids(
                     session, mapping, leaf_a.node_id, leaf_b.node_id
                 )
                 healed += 1
                 log.debug(
                     "healed mapping identity=%s: %s,%s -> %s,%s",
-                    key, mapping.a_item_id, mapping.b_item_id,
+                    key, old_a_id, old_b_id,
                     leaf_a.node_id, leaf_b.node_id,
                 )
 

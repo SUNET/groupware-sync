@@ -172,6 +172,10 @@ class GraphContactAdapter(SyncProvider):
                 data = r.json()
                 for contact in data.get("value", []):
                     leaf = SyncNode(
+                        # identity_key=None is deliberate: see the matching
+                        # comment in contacts JmapContactAdapter.build_tree.
+                        # Graph contact id is provider-specific, not
+                        # cross-provider stable.
                         node_id=contact["id"],
                         name=contact["id"],
                         node_type=NodeType.LEAF,
