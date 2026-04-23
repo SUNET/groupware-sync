@@ -30,8 +30,10 @@ def test_build_tree_requests_uid_property():
                 out.append([name, {"ids": ["e1", "e2"]}, cid])
             elif name == "CalendarEvent/get":
                 out.append([name, {"list": [
-                    {"id": "e1", "updated": "2026-04-17T00:00:00Z", "uid": "uid-one"},
-                    {"id": "e2", "updated": "2026-04-17T00:00:00Z", "uid": "uid-two"},
+                    {"id": "e1", "updated": "2026-04-17T00:00:00Z",
+                     "uid": "uid-one", "calendarIds": {"cal1": True}},
+                    {"id": "e2", "updated": "2026-04-17T00:00:00Z",
+                     "uid": "uid-two", "calendarIds": {"cal1": True}},
                 ]}, cid])
         return out
 
@@ -40,11 +42,12 @@ def test_build_tree_requests_uid_property():
         with patch.object(JmapCalendarAdapter, "_get_events_state", return_value=None):
             root = adapter.build_tree(ItemType.CALENDAR_EVENT)
 
-    # Assert: the CalendarEvent/get invocation requested 'uid'
+    # Assert: the CalendarEvent/get invocation requested 'uid' + 'calendarIds'
     get_calls = [m for call in captured for m in call if m[0] == "CalendarEvent/get"]
     assert get_calls, "no CalendarEvent/get calls made"
     props = get_calls[0][1].get("properties", [])
     assert "uid" in props, f"expected 'uid' in properties, got {props}"
+    assert "calendarIds" in props, f"expected 'calendarIds' in properties, got {props}"
 
     # Assert: leaves carry identity_key derived from uid
     cal = root.children[0]
@@ -56,6 +59,55 @@ def test_build_tree_requests_uid_property():
     assert leaf_by_id["e2"].identity_key == compute_identity_key(
         {"uid": "uid-two"}, ["uid"]
     )
+
+
+def test_events_bucketed_by_calendar_ids_no_inCalendars_filter():
+    """Stalwart rejects inCalendars filters. The adapter must query once
+    account-wide and bucket events into the right calendar container
+    using the event's calendarIds map.
+    """
+    captured: list = []
+
+    def fake_call(self, methods):  # noqa: ANN001
+        captured.append(methods)
+        out = []
+        for m in methods:
+            name = m[0]
+            cid = m[2]
+            if name == "Calendar/get":
+                out.append([name, {"list": [
+                    {"id": "cal_a", "name": "A"},
+                    {"id": "cal_b", "name": "B"},
+                ]}, cid])
+            elif name == "CalendarEvent/query":
+                out.append([name, {"ids": ["e1", "e2", "e3"]}, cid])
+            elif name == "CalendarEvent/get":
+                out.append([name, {"list": [
+                    {"id": "e1", "updated": "2026-04-17T00:00:00Z",
+                     "uid": "u1", "calendarIds": {"cal_a": True}},
+                    {"id": "e2", "updated": "2026-04-17T00:00:00Z",
+                     "uid": "u2", "calendarIds": {"cal_b": True}},
+                    {"id": "e3", "updated": "2026-04-17T00:00:00Z",
+                     "uid": "u3", "calendarIds": {"cal_a": True}},
+                ]}, cid])
+        return out
+
+    adapter = _make_adapter()
+    with patch.object(JmapCalendarAdapter, "_call", fake_call):
+        with patch.object(JmapCalendarAdapter, "_get_events_state", return_value=None):
+            root = adapter.build_tree(ItemType.CALENDAR_EVENT)
+
+    # No inCalendars / calendarIds / inCalendar filter sent to Stalwart.
+    query_calls = [m for call in captured for m in call if m[0] == "CalendarEvent/query"]
+    for qc in query_calls:
+        assert "filter" not in qc[1], (
+            f"CalendarEvent/query must not send a filter: {qc[1]}"
+        )
+
+    # Events bucketed to the correct container
+    cal_by_id = {c.node_id: c for c in root.children}
+    assert {c.node_id for c in cal_by_id["cal_a"].children} == {"e1", "e3"}
+    assert {c.node_id for c in cal_by_id["cal_b"].children} == {"e2"}
 
 
 def test_leaf_has_no_identity_key_when_uid_missing():
@@ -70,7 +122,8 @@ def test_leaf_has_no_identity_key_when_uid_missing():
                 out.append([name, {"ids": ["e1"]}, cid])
             elif name == "CalendarEvent/get":
                 out.append([name, {"list": [
-                    {"id": "e1", "updated": "2026-04-17T00:00:00Z"},
+                    {"id": "e1", "updated": "2026-04-17T00:00:00Z",
+                     "calendarIds": {"cal1": True}},
                 ]}, cid])
         return out
 
