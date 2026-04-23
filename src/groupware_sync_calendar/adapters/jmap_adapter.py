@@ -30,6 +30,7 @@ from groupware_sync.provider import (
     SyncProvider,
 )
 from groupware_sync_calendar import tz
+from groupware_sync_calendar.uid_normalize import normalize_outlook_goid
 
 log = logging.getLogger(__name__)
 
@@ -262,7 +263,8 @@ class JmapCalendarAdapter(SyncProvider):
                         if cal_node is None:
                             continue
                         idk = compute_identity_key(
-                            {"uid": event.get("uid")}, ["uid"]
+                            {"uid": normalize_outlook_goid(event.get("uid"))},
+                            ["uid"],
                         )
                         cal_node.children.append(SyncNode(
                             node_id=event["id"],
