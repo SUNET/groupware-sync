@@ -110,6 +110,46 @@ def test_events_bucketed_by_calendar_ids_no_inCalendars_filter():
     assert {c.node_id for c in cal_by_id["cal_b"].children} == {"e2"}
 
 
+def test_events_batched_by_max_objects_in_get():
+    """Stalwart rejects oversized CalendarEvent/get calls with
+    requestTooLarge. The adapter must chunk get requests according to
+    maxObjectsInGet from the JMAP session.
+    """
+    get_call_sizes: list[int] = []
+
+    def fake_call(self, methods):  # noqa: ANN001
+        out = []
+        for m in methods:
+            name = m[0]
+            args = m[1]
+            cid = m[2]
+            if name == "Calendar/get":
+                out.append([name, {"list": [{"id": "cal1", "name": "K"}]}, cid])
+            elif name == "CalendarEvent/query":
+                out.append([name, {"ids": [f"e{i}" for i in range(250)]}, cid])
+            elif name == "CalendarEvent/get":
+                ids = args.get("ids", [])
+                get_call_sizes.append(len(ids))
+                out.append([name, {"list": [
+                    {"id": eid, "updated": "2026-04-17T00:00:00Z",
+                     "uid": f"u-{eid}", "calendarIds": {"cal1": True}}
+                    for eid in ids
+                ]}, cid])
+        return out
+
+    adapter = _make_adapter()
+    adapter._max_objects_in_get = 100
+    with patch.object(JmapCalendarAdapter, "_call", fake_call):
+        with patch.object(JmapCalendarAdapter, "_get_events_state", return_value=None):
+            root = adapter.build_tree(ItemType.CALENDAR_EVENT)
+
+    assert get_call_sizes == [100, 100, 50], (
+        f"expected 3 batched gets of 100, 100, 50, got {get_call_sizes}"
+    )
+    cal = root.children[0]
+    assert len(cal.children) == 250
+
+
 def test_leaf_has_no_identity_key_when_uid_missing():
     def fake_call(self, methods):  # noqa: ANN001
         out = []

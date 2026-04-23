@@ -99,6 +99,7 @@ class JmapCalendarAdapter(SyncProvider):
         self._api_url: Optional[str] = None
         self._account_id: Optional[str] = None
         self._calendar_filter = calendar_filter  # filter by name if set
+        self._max_objects_in_get: int = 100  # overwritten from JMAP session
 
     # -- SyncProvider interface ------------------------------------------------
 
@@ -217,37 +218,44 @@ class JmapCalendarAdapter(SyncProvider):
         if not event_ids:
             return
 
-        get_results = self._call([
-            [
-                "CalendarEvent/get",
-                {
-                    "accountId": self._account_id,
-                    "ids": event_ids,
-                    "properties": ["id", "updated", "uid", "calendarIds"],
-                },
-                "g0",
-            ],
-        ])
-        for result in get_results:
-            if result[0] != "CalendarEvent/get":
-                continue
-            for event in result[1].get("list", []):
-                event_cal_ids = event.get("calendarIds") or {}
-                for cal_id in event_cal_ids:
-                    cal_node = cal_nodes_by_id.get(cal_id)
-                    if cal_node is None:
-                        continue
-                    idk = compute_identity_key(
-                        {"uid": event.get("uid")}, ["uid"]
+        batch = max(1, self._max_objects_in_get)
+        for i in range(0, len(event_ids), batch):
+            chunk = event_ids[i:i + batch]
+            get_results = self._call([
+                [
+                    "CalendarEvent/get",
+                    {
+                        "accountId": self._account_id,
+                        "ids": chunk,
+                        "properties": ["id", "updated", "uid", "calendarIds"],
+                    },
+                    "g0",
+                ],
+            ])
+            for result in get_results:
+                if result[0] != "CalendarEvent/get":
+                    log.warning(
+                        "CalendarEvent/get batch returned %r: %s",
+                        result[0], str(result[1])[:200],
                     )
-                    cal_node.children.append(SyncNode(
-                        node_id=event["id"],
-                        name=event["id"],
-                        node_type=NodeType.LEAF,
-                        fingerprint=event.get("updated", ""),
-                        item_type=ItemType.CALENDAR_EVENT,
-                        identity_key=idk,
-                    ))
+                    continue
+                for event in result[1].get("list", []):
+                    event_cal_ids = event.get("calendarIds") or {}
+                    for cal_id in event_cal_ids:
+                        cal_node = cal_nodes_by_id.get(cal_id)
+                        if cal_node is None:
+                            continue
+                        idk = compute_identity_key(
+                            {"uid": event.get("uid")}, ["uid"]
+                        )
+                        cal_node.children.append(SyncNode(
+                            node_id=event["id"],
+                            name=event["id"],
+                            node_type=NodeType.LEAF,
+                            fingerprint=event.get("updated", ""),
+                            item_type=ItemType.CALENDAR_EVENT,
+                            identity_key=idk,
+                        ))
 
     def _get_events_state(self) -> Optional[str]:
         """Get the current JMAP state for CalendarEvent."""
@@ -487,6 +495,12 @@ class JmapCalendarAdapter(SyncProvider):
         r.raise_for_status()
         session = r.json()
         self._api_url = session["apiUrl"]
+
+        core_caps = session.get("capabilities", {}).get(
+            "urn:ietf:params:jmap:core", {}
+        )
+        if isinstance(core_caps.get("maxObjectsInGet"), int):
+            self._max_objects_in_get = core_caps["maxObjectsInGet"]
 
         # Find the account with calendars capability
         for acct_id, acct in session.get("accounts", {}).items():
