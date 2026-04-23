@@ -6,7 +6,6 @@ from __future__ import annotations
 from groupware_sync.models import compute_identity_key
 from groupware_sync_calendar.uid_normalize import normalize_outlook_goid
 
-
 # -- Fixture builders -----------------------------------------------------------
 
 OUTLOOK_GOID_PREFIX_HEX = "040000008200E00074C5B7101A82E008"
