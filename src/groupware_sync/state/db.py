@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    inspect,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
@@ -123,13 +124,49 @@ class SchemaMeta(Base):
     version = Column(String(64), nullable=False)
 
 
-def _ensure_schema_version(engine) -> None:
-    """Stamp the current schema version or rebuild the cache on mismatch.
+def _drop_cache_tables_if_stale(engine) -> None:
+    """Drop item_mapping + item_snapshot when their shape is incompatible.
 
-    Strategy: we keep structural tables (node_pair, sync_cursor) intact
-    but drop cache contents (item_snapshot, item_mapping) on version
-    mismatch. The engine's safety invariant ensures the first post-
-    rebuild sync plans no deletes.
+    Runs before create_all. Triggers in two cases:
+    1. Pre-versioning DB (no schema_meta): if item_mapping exists and
+       lacks the identity_key column, it's from before IP-3 and must go.
+    2. Versioned DB with a non-matching schema_meta row: future upgrades.
+
+    create_all then recreates the dropped tables with the current shape.
+    NodePair and SyncCursor (structural, rebuildable-adjacent) survive.
+    The tree comparison's safety invariant ensures the first post-rebuild
+    sync plans no deletes.
+    """
+    insp = inspect(engine)
+    has_schema_meta = insp.has_table("schema_meta")
+    has_item_mapping = insp.has_table("item_mapping")
+
+    should_drop = False
+    if not has_schema_meta and has_item_mapping:
+        cols = {c["name"] for c in insp.get_columns("item_mapping")}
+        if "identity_key" not in cols:
+            should_drop = True
+    elif has_schema_meta:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT version FROM schema_meta LIMIT 1")
+            ).first()
+        if row is not None and row[0] != SCHEMA_VERSION:
+            should_drop = True
+
+    if not should_drop:
+        return
+
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS item_snapshot"))
+        conn.execute(text("DROP TABLE IF EXISTS item_mapping"))
+
+
+def _ensure_schema_version(engine) -> None:
+    """Stamp schema_meta with the current version.
+
+    Assumes _drop_cache_tables_if_stale + create_all have already aligned
+    the table shape. This just writes the version marker.
     """
     with engine.begin() as conn:
         row = conn.execute(text("SELECT version FROM schema_meta LIMIT 1")).first()
@@ -139,20 +176,17 @@ def _ensure_schema_version(engine) -> None:
                 {"v": SCHEMA_VERSION},
             )
             return
-        if row[0] == SCHEMA_VERSION:
-            return
-        # Version mismatch: drop cache contents. Tables survive.
-        conn.execute(text("DELETE FROM item_snapshot"))
-        conn.execute(text("DELETE FROM item_mapping"))
-        conn.execute(
-            text("UPDATE schema_meta SET version = :v"),
-            {"v": SCHEMA_VERSION},
-        )
+        if row[0] != SCHEMA_VERSION:
+            conn.execute(
+                text("UPDATE schema_meta SET version = :v"),
+                {"v": SCHEMA_VERSION},
+            )
 
 
 def make_session_factory(database_url: str) -> sessionmaker:
     """Create engine, ensure schema + version, return a sessionmaker."""
     engine = create_engine(database_url, future=True)
+    _drop_cache_tables_if_stale(engine)
     Base.metadata.create_all(engine)
     _ensure_schema_version(engine)
     return sessionmaker(bind=engine, autoflush=True, autocommit=False)

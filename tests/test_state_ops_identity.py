@@ -132,3 +132,73 @@ def test_cache_rebuild_on_schema_version_mismatch(tmp_path):
     row = s2.execute(text("SELECT version FROM schema_meta")).first()
     assert row[0] == SCHEMA_VERSION
     s2.close()
+
+
+def test_upgrade_from_pre_versioning_db_drops_old_item_mapping(tmp_path):
+    """Reproduces the field bug: a pre-IP-3 DB has an item_mapping table
+    without an identity_key column and no schema_meta table. The factory
+    must drop + recreate the cache tables so the new column exists.
+    """
+    from sqlalchemy import create_engine
+    db_path = tmp_path / "legacy.db"
+    legacy_url = f"sqlite:///{db_path}"
+
+    # Build the pre-IP-3 shape: node_pair + the old item_mapping (no identity_key)
+    # + item_snapshot + sync_cursor. No schema_meta table.
+    engine = create_engine(legacy_url, future=True)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE node_pair (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_type VARCHAR(50) NOT NULL,
+                a_provider VARCHAR(100) NOT NULL,
+                a_node_id VARCHAR(255) NOT NULL,
+                b_provider VARCHAR(100) NOT NULL,
+                b_node_id VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                merkle_hash VARCHAR(64)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE item_mapping (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pair_id INTEGER NOT NULL,
+                a_item_id VARCHAR(255) NOT NULL,
+                b_item_id VARCHAR(255) NOT NULL,
+                fingerprint_a VARCHAR(255),
+                fingerprint_b VARCHAR(255),
+                FOREIGN KEY(pair_id) REFERENCES node_pair(id)
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO node_pair
+                (item_type, a_provider, a_node_id, b_provider, b_node_id, name)
+            VALUES ('calendar_event', 'a', 'ca', 'b', 'cb', 'calname')
+        """))
+        conn.execute(text("""
+            INSERT INTO item_mapping
+                (pair_id, a_item_id, b_item_id, fingerprint_a, fingerprint_b)
+            VALUES (1, 'old-a', 'old-b', 'fpa', 'fpb')
+        """))
+    engine.dispose()
+
+    # Open with the real factory — this must not crash, and the column must exist
+    sf = make_session_factory(legacy_url)
+    s = sf()
+
+    cols = {
+        row[1]
+        for row in s.execute(text("PRAGMA table_info(item_mapping)")).fetchall()
+    }
+    assert "identity_key" in cols, (
+        "identity_key column missing — factory didn't migrate the legacy table"
+    )
+
+    # Cache rebuilt — no mappings
+    assert s.query(ItemMapping).all() == []
+    # Structural data (NodePairs) preserved
+    assert len(s.query(NodePair).all()) == 1
+    # Schema stamped
+    version_row = s.execute(text("SELECT version FROM schema_meta")).first()
+    assert version_row[0] == SCHEMA_VERSION
+    s.close()
