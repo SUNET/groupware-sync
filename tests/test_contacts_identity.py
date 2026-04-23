@@ -31,13 +31,18 @@ def test_graph_contact_adapter_leaf_construction_sets_identity_key_none():
     assert "identity_key=None" in src
 
 
-def test_carddav_contact_adapter_leaf_construction_sets_identity_key_none():
+def test_carddav_contact_adapter_leaf_construction_derives_identity_key_from_filename():
+    """CardDAV contacts derive identity_key from the '<UID>.vcf' href
+    basename (the convention both Radicale and our own create_item use),
+    which lets CardDAV↔CardDAV pairs match by vCard UID without an
+    extra body fetch."""
     try:
         import groupware_sync_contacts.adapters.carddav_adapter as mod
         src = inspect.getsource(mod.CardDavContactAdapter.build_tree)
     except ModuleNotFoundError:
-        # vobject might not be installed in test environment; read source directly
         import pathlib
         carddav_path = pathlib.Path(__file__).parent.parent / "src" / "groupware_sync_contacts" / "adapters" / "carddav_adapter.py"
         src = carddav_path.read_text()
-    assert "identity_key=None" in src
+    assert "compute_identity_key" in src
+    assert ".vcf" in src
+    assert "identity_key=idk" in src

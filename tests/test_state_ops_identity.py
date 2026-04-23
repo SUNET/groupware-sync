@@ -6,9 +6,9 @@ from sqlalchemy import text
 
 from groupware_sync.state import ops
 from groupware_sync.state.db import (
+    SCHEMA_VERSION,
     ItemMapping,
     NodePair,
-    SCHEMA_VERSION,
     make_session_factory,
 )
 

@@ -22,7 +22,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
-
 SCHEMA_VERSION = "3-rebuild-all"
 
 

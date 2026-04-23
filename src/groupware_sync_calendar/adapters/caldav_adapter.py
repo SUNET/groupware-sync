@@ -23,6 +23,7 @@ from groupware_sync.models import (
     NodeType,
     SyncItem,
     SyncNode,
+    compute_identity_key,
 )
 from groupware_sync.provider import (
     NotificationCapability,
@@ -196,12 +197,23 @@ class CalDavCalendarAdapter(SyncProvider):
                     continue
 
                 etag = _text(prop, f"{{{DAV_NS}}}getetag")
+                # Derive identity_key from the href filename per the
+                # widespread CalDAV convention "<UID>.ics" (matches what
+                # our own create_item path writes). Lets CalDAV↔CalDAV
+                # pairs match by RFC 5545 UID like JMAP↔Graph do.
+                basename = href.rsplit("/", 1)[-1]
+                uid = basename[:-4] if basename.endswith(".ics") else None
+                idk = (
+                    compute_identity_key({"uid": uid}, ["uid"])
+                    if uid else None
+                )
                 leaf = SyncNode(
                     node_id=href,
                     name=href,
                     node_type=NodeType.LEAF,
                     fingerprint=etag or "",
                     item_type=ItemType.CALENDAR_EVENT,
+                    identity_key=idk,
                 )
                 cal_node.children.append(leaf)
 
@@ -368,8 +380,22 @@ class CalDavCalendarAdapter(SyncProvider):
     def create_item(
         self, container_id: str, item: SyncItem
     ) -> tuple[str, str]:
-        """Create a calendar event via PUT. Returns (href, etag)."""
-        uid = str(uuid.uuid4())
+        """Create a calendar event via PUT. Returns (href, etag).
+
+        Preserves the source-side UID when available so the resulting
+        filename ('<UID>.ics') and the body's UID match across providers.
+        Identity-based pairing reads UID from the filename, so generating
+        a fresh UUID here would leave the new resource looking unpaired
+        on the very next sync.
+        """
+        uid = item.fields.get("uid")
+        if not uid:
+            src_href = item.provider_id or ""
+            basename = src_href.rstrip("/").rsplit("/", 1)[-1]
+            if basename.endswith(".ics"):
+                uid = basename[:-4]
+        if not uid:
+            uid = str(uuid.uuid4())
         ical_text = _sync_item_to_ical(item, uid=uid)
         href = f"{container_id.rstrip('/')}/{uid}.ics"
         url = self._abs_url(href)

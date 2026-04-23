@@ -22,6 +22,7 @@ from groupware_sync.models import (
     NodeType,
     SyncItem,
     SyncNode,
+    compute_identity_key,
 )
 from groupware_sync.provider import (
     NotificationCapability,
@@ -158,13 +159,23 @@ class CardDavContactAdapter(SyncProvider):
                     continue
 
                 etag = _text(prop, f"{{{DAV_NS}}}getetag")
+                # Derive identity_key from the href filename per the
+                # widespread CardDAV convention "<UID>.vcf" (matches what
+                # our own create_item path writes). Lets CardDAV↔CardDAV
+                # pairs match by vCard UID cross-instance.
+                basename = href.rsplit("/", 1)[-1]
+                uid = basename[:-4] if basename.endswith(".vcf") else None
+                idk = (
+                    compute_identity_key({"uid": uid}, ["uid"])
+                    if uid else None
+                )
                 leaf = SyncNode(
                     node_id=href,
                     name=href,
                     node_type=NodeType.LEAF,
                     fingerprint=etag or "",
                     item_type=ItemType.CONTACT,
-                    identity_key=None,
+                    identity_key=idk,
                 )
                 ab_node.children.append(leaf)
 
@@ -326,8 +337,20 @@ class CardDavContactAdapter(SyncProvider):
         resp.raise_for_status()
 
     def create_item(self, container_id: str, item: SyncItem) -> tuple[str, str]:
-        """Create a contact via PUT. Returns (href, etag)."""
-        uid = str(uuid.uuid4())
+        """Create a contact via PUT. Returns (href, etag).
+
+        Preserves the source-side vCard UID when available so the resulting
+        filename ('<UID>.vcf') and the body's UID match across providers.
+        Identity-based pairing reads UID from the filename.
+        """
+        uid = item.fields.get("uid")
+        if not uid:
+            src_href = item.provider_id or ""
+            basename = src_href.rstrip("/").rsplit("/", 1)[-1]
+            if basename.endswith(".vcf"):
+                uid = basename[:-4]
+        if not uid:
+            uid = str(uuid.uuid4())
         vcard_text = _sync_item_to_vcard(item, uid=uid)
         href = f"{container_id.rstrip('/')}/{uid}.vcf"
         url = self._abs_url(href)
