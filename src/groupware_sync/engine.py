@@ -7,6 +7,7 @@ deletes) while maintaining the state DB.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import sys
 from collections import defaultdict
@@ -91,9 +92,12 @@ def sync_trees(
 
     # Phase 3 — Compare trees
     log.info("Phase 3: comparing trees")
-    operations = compare_trees(
+    operations, healed_count = compare_trees(
         tree_a, tree_b, provider_a.name, provider_b.name, item_type, session
     )
+    summary.identity_pairs_healed += healed_count
+    if healed_count:
+        log.info("Healed %d stale mapping(s) by identity", healed_count)
     log.info("Phase 3 produced %d operations", len(operations))
 
     if dry_run:
@@ -587,6 +591,17 @@ def _merge_one(
 # ---------------------------------------------------------------------------
 
 
+def _legacy_identity_key(*parts: str) -> str:
+    """Deterministic 64-hex fallback key for leaves without a real identity.
+
+    Kept distinct from real identity-keyed mappings by namespacing with
+    'legacy' inside the hash input. Fits the ItemMapping.identity_key
+    VARCHAR(64) column on MySQL/Postgres.
+    """
+    raw = "|".join(("legacy", *parts))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def _execute_creates(
     create_ops: list[SyncOp],
     provider_a: SyncProvider,
@@ -718,6 +733,11 @@ def _execute_creates(
             pair.id,
             a_id,
             b_id,
+            identity_key=(
+                op_a.identity_key
+                or op_b.identity_key
+                or _legacy_identity_key(a_id, b_id)
+            ),
             fingerprint_a=new_fp_a,
             fingerprint_b=new_fp_b,
         )
@@ -757,6 +777,7 @@ def _execute_creates(
             pair.id,
             a_id,
             new_b_id,
+            identity_key=op.identity_key or _legacy_identity_key(a_id, new_b_id),
             fingerprint_a=item_a.fingerprint,
             fingerprint_b=new_b_fp,
         )
@@ -795,6 +816,7 @@ def _execute_creates(
             pair.id,
             new_a_id,
             b_id,
+            identity_key=op.identity_key or _legacy_identity_key(new_a_id, b_id),
             fingerprint_a=new_a_fp,
             fingerprint_b=item_b.fingerprint,
         )

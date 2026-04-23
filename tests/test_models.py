@@ -2,8 +2,10 @@
 from groupware_sync.models import (
     ItemType,
     NodeType,
+    OpType,
     SyncItem,
     SyncNode,
+    SyncOp,
     SyncSummary,
 )
 from groupware_sync.provider import (
@@ -139,3 +141,28 @@ def test_sync_summary_aborted_defaults_false():
 def test_sync_summary_aborted_settable():
     s = SyncSummary(aborted=True)
     assert s.aborted is True
+
+
+def test_sync_summary_identity_pairs_healed_defaults_zero():
+    s = SyncSummary()
+    assert s.identity_pairs_healed == 0
+
+
+def test_sync_summary_identity_pairs_healed_settable():
+    s = SyncSummary(identity_pairs_healed=42)
+    assert s.identity_pairs_healed == 42
+
+
+def test_sync_op_has_identity_key():
+    op = SyncOp(
+        op_type=OpType.CREATE_ITEM,
+        target_side="b",
+        node_id="x",
+        identity_key="sha256hex",
+    )
+    assert op.identity_key == "sha256hex"
+
+
+def test_sync_op_identity_key_defaults_none():
+    op = SyncOp(op_type=OpType.SKIP_SUBTREE, target_side="b", node_id="x")
+    assert op.identity_key is None

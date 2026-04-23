@@ -22,6 +22,7 @@ from groupware_sync.models import (
     NodeType,
     SyncItem,
     SyncNode,
+    compute_identity_key,
 )
 from groupware_sync.provider import (
     NotificationCapability,
@@ -98,6 +99,7 @@ class JmapCalendarAdapter(SyncProvider):
         self._api_url: Optional[str] = None
         self._account_id: Optional[str] = None
         self._calendar_filter = calendar_filter  # filter by name if set
+        self._max_objects_in_get: int = 100  # overwritten from JMAP session
 
     # -- SyncProvider interface ------------------------------------------------
 
@@ -152,89 +154,124 @@ class JmapCalendarAdapter(SyncProvider):
                 # Normalize name so both sides match when paired
                 calendars[0]["name"] = "__synced__"
 
-        # 2. For each calendar, check if we can skip it
+        # 2. Build container nodes; honour per-calendar state-skip.
+        # Stalwart's CalendarEvent/query rejects inCalendars and the other
+        # spec-variant filters (tested with `unsupportedFilter` responses on
+        # inCalendars / calendarIds / inCalendarIds / calendarId, and
+        # inCalendar silently returns all events). So we can't ask JMAP for
+        # a per-calendar slice; we must fetch everything and bucket locally
+        # via the event's calendarIds map.
+        current_state = self._get_events_state()
+        cal_nodes_to_fetch: dict[str, SyncNode] = {}
         for cal in calendars:
             cal_id = cal["id"]
             stored = known_states.get(cal_id)
 
             if stored is not None:
                 stored_cursor, stored_merkle = stored
-                # Ask JMAP if state changed since stored_cursor
-                current_state = self._get_events_state()
                 if current_state and current_state == stored_cursor:
                     log.debug(
                         "skipping calendar %s (state unchanged: %s)",
-                        cal["name"],
-                        current_state,
+                        cal["name"], current_state,
                     )
-                    cal_node = SyncNode(
+                    root.children.append(SyncNode(
                         node_id=cal_id,
                         name=cal["name"],
                         node_type=NodeType.CONTAINER,
                         merkle_hash=stored_merkle,
                         state_cursor=current_state,
                         skipped=True,
-                    )
-                    root.children.append(cal_node)
+                    ))
                     continue
 
-            # State changed or no stored state — fetch children
             cal_node = SyncNode(
                 node_id=cal_id,
                 name=cal["name"],
                 node_type=NodeType.CONTAINER,
+                state_cursor=current_state,
             )
+            root.children.append(cal_node)
+            cal_nodes_to_fetch[cal_id] = cal_node
 
-            # Get current JMAP state for this type (to store for next sync)
-            current_state = self._get_events_state()
-            if current_state:
-                cal_node.state_cursor = current_state
+        # 3. Fetch all events account-wide and bucket by calendarIds.
+        if cal_nodes_to_fetch:
+            self._populate_events(cal_nodes_to_fetch)
 
-            # Query event IDs in this calendar
+        root.compute_merkle()
+        return root
+
+    def _populate_events(self, cal_nodes_by_id: dict[str, SyncNode]) -> None:
+        """Query all CalendarEvents account-wide, then attach each as a
+        leaf under the calendar nodes it belongs to (via calendarIds).
+        Events in calendars we didn't build nodes for are ignored."""
+        # JMAP servers MAY cap query responses, so paginate until we see
+        # a short page. maxObjectsInGet is the server's hard limit for
+        # get responses; query responses have their own limits but using
+        # the same batch bound is a safe upper bound and lets us keep one
+        # knob.
+        batch = max(1, self._max_objects_in_get)
+        event_ids: list[str] = []
+        position = 0
+        while True:
             query_results = self._call([
                 [
                     "CalendarEvent/query",
                     {
                         "accountId": self._account_id,
-                        "filter": {"inCalendars": [cal_id]},
+                        "position": position,
+                        "limit": batch,
                     },
                     "q0",
                 ],
             ])
-            event_ids: list[str] = []
+            page_ids: list[str] = []
             for result in query_results:
                 if result[0] == "CalendarEvent/query":
-                    event_ids = result[1].get("ids", [])
-
-            if event_ids:
-                # Fetch only id + updated for fingerprinting
-                get_results = self._call([
-                    [
-                        "CalendarEvent/get",
-                        {
-                            "accountId": self._account_id,
-                            "ids": event_ids,
-                            "properties": ["id", "updated"],
-                        },
-                        "g0",
-                    ],
-                ])
-                for result in get_results:
-                    if result[0] == "CalendarEvent/get":
-                        for event in result[1].get("list", []):
-                            leaf = SyncNode(
-                                node_id=event["id"],
-                                name=event["id"],
-                                node_type=NodeType.LEAF,
-                                fingerprint=event.get("updated", ""),
-                                item_type=ItemType.CALENDAR_EVENT,
-                            )
-                            cal_node.children.append(leaf)
-
-            root.children.append(cal_node)
-
-        root.compute_merkle()
-        return root
+                    page_ids = result[1].get("ids", [])
+                    break
+            event_ids.extend(page_ids)
+            if len(page_ids) < batch:
+                break
+            position += len(page_ids)
+        if not event_ids:
+            return
+        for i in range(0, len(event_ids), batch):
+            chunk = event_ids[i:i + batch]
+            get_results = self._call([
+                [
+                    "CalendarEvent/get",
+                    {
+                        "accountId": self._account_id,
+                        "ids": chunk,
+                        "properties": ["id", "updated", "uid", "calendarIds"],
+                    },
+                    "g0",
+                ],
+            ])
+            for result in get_results:
+                if result[0] != "CalendarEvent/get":
+                    log.warning(
+                        "CalendarEvent/get batch returned %r: %s",
+                        result[0], str(result[1])[:200],
+                    )
+                    continue
+                for event in result[1].get("list", []):
+                    event_cal_ids = event.get("calendarIds") or {}
+                    for cal_id in event_cal_ids:
+                        cal_node = cal_nodes_by_id.get(cal_id)
+                        if cal_node is None:
+                            continue
+                        idk = compute_identity_key(
+                            {"uid": event.get("uid")}, ["uid"]
+                        )
+                        cal_node.children.append(SyncNode(
+                            node_id=event["id"],
+                            name=event["id"],
+                            node_type=NodeType.LEAF,
+                            fingerprint=event.get("updated", ""),
+                            item_type=ItemType.CALENDAR_EVENT,
+                            identity_key=idk,
+                        ))
 
     def _get_events_state(self) -> Optional[str]:
         """Get the current JMAP state for CalendarEvent."""
@@ -474,6 +511,12 @@ class JmapCalendarAdapter(SyncProvider):
         r.raise_for_status()
         session = r.json()
         self._api_url = session["apiUrl"]
+
+        core_caps = session.get("capabilities", {}).get(
+            "urn:ietf:params:jmap:core", {}
+        )
+        if isinstance(core_caps.get("maxObjectsInGet"), int):
+            self._max_objects_in_get = core_caps["maxObjectsInGet"]
 
         # Find the account with calendars capability
         for acct_id, acct in session.get("accounts", {}).items():

@@ -8,6 +8,7 @@ TypeSpec/FieldDef: per-type merge configuration.
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -41,6 +42,49 @@ class MergeStrategy(Enum):
     IGNORE = "ignore"
 
 
+def compute_identity_key(
+    fields: dict,
+    identity_fields: list[str],
+) -> Optional[str]:
+    """Canonical SHA-256 hex digest of the named fields, or None if unusable.
+
+    - Case-insensitive, whitespace-stripped canonicalization.
+    - List values: each element is normalized; order-independent.
+    - Dict values with a 'value' key: extract the value (for email/phone shapes).
+    """
+    def canonical(v: object) -> str:
+        if isinstance(v, dict):
+            v = v.get("value")
+        # Treat None as empty: a list entry shaped {"value": None} or a
+        # dict field that's simply absent must not turn into the string
+        # "None" and generate a spurious identity key.
+        if v is None:
+            return ""
+        # NFC normalize before casefold so visually-identical strings with
+        # different Unicode decompositions hash equally. casefold is stricter
+        # than lower (handles ß → ss etc). Identity values are opaque
+        # identifiers; this is defensive, not free-form text handling.
+        return unicodedata.normalize("NFC", str(v)).strip().casefold()
+
+    parts: list[str] = []
+    for name in identity_fields:
+        val = fields.get(name)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            entries = sorted(filter(None, (canonical(v) for v in val)))
+            for s in entries:
+                parts.append(f"{name}={s}")
+        else:
+            s = canonical(val)
+            if s:
+                parts.append(f"{name}={s}")
+    if not parts:
+        return None
+    parts.sort()
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
 @dataclass
 class SyncNode:
     """A node in the sync tree. Containers have children; leaves don't."""
@@ -54,6 +98,7 @@ class SyncNode:
     children: list[SyncNode] = field(default_factory=list)
     state_cursor: Optional[str] = None  # protocol's state indicator for this container
     skipped: bool = False  # True if children were not fetched (state unchanged)
+    identity_key: Optional[str] = None  # cross-provider pairing key for leaves
 
     def compute_merkle(self) -> str:
         """Compute subtree hash bottom-up.
@@ -125,6 +170,7 @@ class SyncOp:
     container_id_b: Optional[str] = None
     container_name: Optional[str] = None
     item_type: Optional[ItemType] = None
+    identity_key: Optional[str] = None
 
 
 @dataclass
@@ -159,3 +205,4 @@ class SyncSummary:
     skipped: int = 0
     errors: int = 0
     aborted: bool = False
+    identity_pairs_healed: int = 0
