@@ -138,15 +138,19 @@ def _drop_cache_tables_if_stale(engine) -> None:
     sync plans no deletes.
     """
     insp = inspect(engine)
-    has_schema_meta = insp.has_table("schema_meta")
-    has_item_mapping = insp.has_table("item_mapping")
-
     should_drop = False
-    if not has_schema_meta and has_item_mapping:
+
+    # Physical shape first: a prior buggy migration may have stamped
+    # schema_meta at the current version without actually adding the
+    # identity_key column, so don't trust the stamp alone.
+    if insp.has_table("item_mapping"):
         cols = {c["name"] for c in insp.get_columns("item_mapping")}
         if "identity_key" not in cols:
             should_drop = True
-    elif has_schema_meta:
+
+    # Stamp mismatch (future upgrades that don't change item_mapping's
+    # columns still route through here).
+    if not should_drop and insp.has_table("schema_meta"):
         with engine.begin() as conn:
             row = conn.execute(
                 text("SELECT version FROM schema_meta LIMIT 1")

@@ -134,6 +134,67 @@ def test_cache_rebuild_on_schema_version_mismatch(tmp_path):
     s2.close()
 
 
+def test_upgrade_when_schema_meta_stamped_but_column_missing(tmp_path):
+    """Real-world case: an earlier run of the buggy migration stamped
+    schema_meta with the current version without actually adding the
+    identity_key column. The factory must not trust the stamp alone —
+    it must inspect the physical table shape.
+    """
+    from sqlalchemy import create_engine
+    db_path = tmp_path / "lying-stamp.db"
+    legacy_url = f"sqlite:///{db_path}"
+
+    engine = create_engine(legacy_url, future=True)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE node_pair (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_type VARCHAR(50) NOT NULL,
+                a_provider VARCHAR(100) NOT NULL,
+                a_node_id VARCHAR(255) NOT NULL,
+                b_provider VARCHAR(100) NOT NULL,
+                b_node_id VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                merkle_hash VARCHAR(64)
+            )
+        """))
+        # Legacy item_mapping: no identity_key column
+        conn.execute(text("""
+            CREATE TABLE item_mapping (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pair_id INTEGER NOT NULL,
+                a_item_id VARCHAR(255) NOT NULL,
+                b_item_id VARCHAR(255) NOT NULL,
+                fingerprint_a VARCHAR(255),
+                fingerprint_b VARCHAR(255)
+            )
+        """))
+        # schema_meta stamped with the CURRENT version — this is the lie
+        conn.execute(text("""
+            CREATE TABLE schema_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version VARCHAR(64) NOT NULL
+            )
+        """))
+        conn.execute(
+            text("INSERT INTO schema_meta (version) VALUES (:v)"),
+            {"v": SCHEMA_VERSION},
+        )
+    engine.dispose()
+
+    sf = make_session_factory(legacy_url)
+    s = sf()
+
+    cols = {
+        row[1]
+        for row in s.execute(text("PRAGMA table_info(item_mapping)")).fetchall()
+    }
+    assert "identity_key" in cols, (
+        "stale schema: factory trusted the lying version stamp"
+    )
+    s.close()
+
+
 def test_upgrade_from_pre_versioning_db_drops_old_item_mapping(tmp_path):
     """Reproduces the field bug: a pre-IP-3 DB has an item_mapping table
     without an identity_key column and no schema_meta table. The factory
