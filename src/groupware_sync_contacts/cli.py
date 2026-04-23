@@ -141,6 +141,7 @@ def sync_cmd(
         f" conflicts={summary.conflicts}"
         f" skipped={summary.skipped}"
         f" errors={summary.errors}"
+        f" healed={summary.identity_pairs_healed}"
     )
 
     if summary.errors > 0:

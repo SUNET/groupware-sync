@@ -199,6 +199,17 @@ def _compare_node(
     cached = ops.get_mappings_by_identity(session, pair.id)
     had_cache = bool(cached)
 
+    if leaves_a or leaves_b:
+        paired_keys = set(by_identity_a) & set(by_identity_b)
+        log.info(
+            "pair %r: a=%d (keyed=%d, unpairable=%d), "
+            "b=%d (keyed=%d, unpairable=%d), paired_by_identity=%d, cache=%d",
+            node_a.name,
+            len(leaves_a), len(by_identity_a), len(unpairable_a),
+            len(leaves_b), len(by_identity_b), len(unpairable_b),
+            len(paired_keys), len(cached),
+        )
+
     all_keys = set(by_identity_a) | set(by_identity_b) | set(cached)
     for key in sorted(all_keys):
         leaf_a = by_identity_a.get(key)
