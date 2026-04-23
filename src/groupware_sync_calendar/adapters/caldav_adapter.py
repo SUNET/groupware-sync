@@ -24,7 +24,11 @@ from groupware_sync.models import (
     SyncItem,
     SyncNode,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
+    SyncProvider,
+)
 from groupware_sync_calendar import tz
 
 log = logging.getLogger(__name__)
@@ -62,6 +66,13 @@ _PARTSTAT_REVERSE: dict[str, str] = {v: k for k, v in _PARTSTAT_MAP.items()}
 
 class CalDavCalendarAdapter(SyncProvider):
     """SyncProvider implementation backed by a CalDAV server."""
+
+    notification_policy = NotificationPolicy(
+        create_item=NotificationCapability.UNSUPPORTED,
+        update_item=NotificationCapability.UNSUPPORTED,
+        delete_item=NotificationCapability.UNSUPPORTED,
+        delete_container=NotificationCapability.UNSUPPORTED,
+    )
 
     def __init__(
         self,

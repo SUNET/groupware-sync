@@ -21,7 +21,11 @@ from groupware_sync.models import (
     SyncItem,
     SyncNode,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
+    SyncProvider,
+)
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +35,13 @@ USING = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:contacts"]
 
 class JmapContactAdapter(SyncProvider):
     """SyncProvider implementation backed by a Stalwart JMAP server."""
+
+    notification_policy = NotificationPolicy(
+        create_item=NotificationCapability.SUPPRESSED,
+        update_item=NotificationCapability.SUPPRESSED,
+        delete_item=NotificationCapability.SUPPRESSED,
+        delete_container=NotificationCapability.SUPPRESSED,
+    )
 
     def __init__(
         self, jmap_url: str, access_token: str, addressbook_filter: Optional[str] = None,

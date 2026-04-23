@@ -23,7 +23,11 @@ from groupware_sync.models import (
     SyncItem,
     SyncNode,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
+    SyncProvider,
+)
 from groupware_sync_calendar import tz
 
 log = logging.getLogger(__name__)
@@ -71,6 +75,13 @@ _VALID_FREQ = {"YEARLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "MINUTELY", "SE
 
 class JmapCalendarAdapter(SyncProvider):
     """SyncProvider implementation backed by a Stalwart JMAP server."""
+
+    notification_policy = NotificationPolicy(
+        create_item=NotificationCapability.BEST_EFFORT,
+        update_item=NotificationCapability.BEST_EFFORT,
+        delete_item=NotificationCapability.BEST_EFFORT,
+        delete_container=NotificationCapability.BEST_EFFORT,
+    )
 
     def __init__(
         self,
@@ -355,6 +366,7 @@ class JmapCalendarAdapter(SyncProvider):
                 "CalendarEvent/set",
                 {
                     "accountId": self._account_id,
+                    "sendSchedulingMessages": False,
                     "create": {"new1": event},
                 },
                 "c0",
@@ -362,12 +374,19 @@ class JmapCalendarAdapter(SyncProvider):
         ])
         for result in results:
             if result[0] == "CalendarEvent/set":
+                not_created = result[1].get("notCreated", {})
+                if "new1" in not_created:
+                    err = not_created["new1"]
+                    raise ValueError(
+                        f"JMAP create calendar event failed: "
+                        f"{err.get('type', 'unknown')} — {err.get('description', '')}"
+                    )
                 created = result[1].get("created", {})
                 new_item = created.get("new1", {})
                 new_id = new_item["id"]
                 fingerprint = new_item.get("updated", "")
                 return new_id, fingerprint
-        raise ValueError("JMAP create calendar event failed")
+        raise ValueError("JMAP create calendar event failed: no CalendarEvent/set in response")
 
     def update_item(self, container_id: str, item: SyncItem) -> str:
         """Update an existing calendar event. Returns server-assigned fingerprint."""
@@ -378,6 +397,7 @@ class JmapCalendarAdapter(SyncProvider):
                 "CalendarEvent/set",
                 {
                     "accountId": self._account_id,
+                    "sendSchedulingMessages": False,
                     "update": {item.provider_id: event},
                 },
                 "u0",
@@ -424,6 +444,7 @@ class JmapCalendarAdapter(SyncProvider):
                 "CalendarEvent/set",
                 {
                     "accountId": self._account_id,
+                    "sendSchedulingMessages": False,
                     "destroy": [item_id],
                 },
                 "d0",

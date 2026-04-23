@@ -23,7 +23,11 @@ from groupware_sync.models import (
     SyncItem,
     SyncNode,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
+    SyncProvider,
+)
 from groupware_sync_calendar.rrule import graph_recurrence_to_rrule, rrule_to_graph_recurrence
 from groupware_sync_calendar.tz import from_utc, iana_to_windows, to_utc, windows_to_iana
 
@@ -109,6 +113,13 @@ def _priority_to_importance(priority: int) -> str:
 class GraphCalendarAdapter(SyncProvider):
     """SyncProvider implementation for Microsoft Graph calendar events."""
 
+    notification_policy = NotificationPolicy(
+        create_item=NotificationCapability.BEST_EFFORT,
+        update_item=NotificationCapability.BEST_EFFORT,
+        delete_item=NotificationCapability.BEST_EFFORT,
+        delete_container=NotificationCapability.BEST_EFFORT,
+    )
+
     def __init__(
         self, access_token: str, calendar_filter: Optional[str] = None
     ) -> None:
@@ -145,6 +156,21 @@ class GraphCalendarAdapter(SyncProvider):
             )
             time.sleep(retry_after)
         return resp  # unreachable, but keeps mypy happy
+
+    def _write_request(
+        self, method: str, url: str, **kwargs: Any
+    ) -> httpx.Response:
+        """Variant of _request that adds the notification-suppression Prefer
+        header. Use for POST/PATCH/DELETE on events and event-bearing
+        endpoints. Read paths stay on _request to keep the header off GETs.
+        """
+        headers = dict(kwargs.pop("headers", None) or {})
+        existing_prefer = headers.get("Prefer", "")
+        suppress = "outlook.send-notifications=false"
+        headers["Prefer"] = (
+            f"{existing_prefer}, {suppress}" if existing_prefer else suppress
+        )
+        return self._request(method, url, headers=headers, **kwargs)
 
     # -- SyncProvider interface ------------------------------------------------
 
@@ -317,19 +343,19 @@ class GraphCalendarAdapter(SyncProvider):
         self, name: str, parent_id: Optional[str] = None
     ) -> str:
         """Create a calendar, return its provider ID."""
-        r = self._request("POST", "/me/calendars", json={"name": name})
+        r = self._write_request("POST", "/me/calendars", json={"name": name})
         r.raise_for_status()
         return r.json()["id"]
 
     def delete_container(self, container_id: str) -> None:
         """Delete a calendar."""
-        r = self._request("DELETE", f"/me/calendars/{container_id}")
+        r = self._write_request("DELETE", f"/me/calendars/{container_id}")
         r.raise_for_status()
 
     def create_item(self, container_id: str, item: SyncItem) -> tuple[str, str]:
         """Create an event. Returns (new_id, server_fingerprint)."""
         body = _sync_item_to_graph(item)
-        r = self._request(
+        r = self._write_request(
             "POST", f"/me/calendars/{container_id}/events", json=body
         )
         r.raise_for_status()
@@ -339,13 +365,13 @@ class GraphCalendarAdapter(SyncProvider):
     def update_item(self, container_id: str, item: SyncItem) -> str:
         """Update an existing event. Returns server-assigned fingerprint."""
         body = _sync_item_to_graph(item)
-        r = self._request("PATCH", f"/me/events/{item.provider_id}", json=body)
+        r = self._write_request("PATCH", f"/me/events/{item.provider_id}", json=body)
         r.raise_for_status()
         return r.json().get("lastModifiedDateTime", "")
 
     def delete_item(self, container_id: str, item_id: str) -> None:
         """Delete an event. Silently ignores 404 (already gone)."""
-        r = self._request("DELETE", f"/me/events/{item_id}")
+        r = self._write_request("DELETE", f"/me/events/{item_id}")
         if r.status_code == 404:
             log.info("graph event %s already deleted", item_id)
             return

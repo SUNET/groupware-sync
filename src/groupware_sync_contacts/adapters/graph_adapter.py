@@ -23,7 +23,11 @@ from groupware_sync.models import (
     SyncItem,
     SyncNode,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
+    SyncProvider,
+)
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +46,13 @@ _ADDR_FIELDS = {
 
 class GraphContactAdapter(SyncProvider):
     """SyncProvider implementation backed by Microsoft Graph v1.0."""
+
+    notification_policy = NotificationPolicy(
+        create_item=NotificationCapability.SUPPRESSED,
+        update_item=NotificationCapability.SUPPRESSED,
+        delete_item=NotificationCapability.SUPPRESSED,
+        delete_container=NotificationCapability.SUPPRESSED,
+    )
 
     def __init__(self, access_token: str, addressbook_filter: Optional[str] = None) -> None:
         self._client = httpx.Client(

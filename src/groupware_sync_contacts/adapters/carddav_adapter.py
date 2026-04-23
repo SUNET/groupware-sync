@@ -23,7 +23,11 @@ from groupware_sync.models import (
     SyncItem,
     SyncNode,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import (
+    NotificationCapability,
+    NotificationPolicy,
+    SyncProvider,
+)
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +39,13 @@ TIMEOUT = 30.0
 
 class CardDavContactAdapter(SyncProvider):
     """SyncProvider implementation backed by a CardDAV server."""
+
+    notification_policy = NotificationPolicy(
+        create_item=NotificationCapability.SUPPRESSED,
+        update_item=NotificationCapability.SUPPRESSED,
+        delete_item=NotificationCapability.SUPPRESSED,
+        delete_container=NotificationCapability.SUPPRESSED,
+    )
 
     def __init__(self, base_url: str, username: str, password: str) -> None:
         self._base_url = base_url.rstrip("/")

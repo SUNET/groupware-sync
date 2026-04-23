@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import sys
 from collections import defaultdict
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,7 @@ from groupware_sync.models import (
     SyncSummary,
     TypeSpec,
 )
-from groupware_sync.provider import SyncProvider
+from groupware_sync.provider import NotificationCapability, SyncProvider
 from groupware_sync.state import ops
 from groupware_sync.tree import compare_trees
 
@@ -43,6 +44,7 @@ def sync_trees(
     type_spec: TypeSpec,
     session: Session,
     dry_run: bool = False,
+    confirm: Optional[Callable[[list[SyncOp], SyncSummary], bool]] = None,
 ) -> SyncSummary:
     """Run a full two-way tree sync between two providers.
 
@@ -95,10 +97,44 @@ def sync_trees(
     log.info("Phase 3 produced %d operations", len(operations))
 
     if dry_run:
-        # Log the plan without executing
-        _log_dry_run(operations, provider_a.name, provider_b.name, summary)
+        _log_dry_run(operations, provider_a, provider_b, summary)
         log.info("Dry run complete — no changes made")
         return summary
+
+    if confirm is not None:
+        if not _has_write_op(operations):
+            # Empty plan or a plan that is only SKIP_SUBTREE / both-gone
+            # reconciliations: no writes to confirm. Populate summary so the
+            # caller can still report skipped counts, then return.
+            _populate_plan_summary(operations, summary)
+            log.info("Plan has no writes — nothing to confirm, no writes to execute")
+            return summary
+
+        plan_summary = SyncSummary()
+        _populate_plan_summary(operations, plan_summary)
+        lines = _format_plan(operations, provider_a, provider_b)
+        for line in lines:
+            print(line, file=sys.stdout)
+        summary_line = (
+            f"SUMMARY containers={plan_summary.containers}"
+            f" created={plan_summary.created}"
+            f" updated={plan_summary.updated}"
+            f" deleted={plan_summary.deleted}"
+            f" skipped={plan_summary.skipped}"
+        )
+        print(summary_line, file=sys.stdout)
+        if any("[!]" in line for line in lines):
+            print(
+                "NOTE: some ops may emit attendee notifications (see [!] markers above)",
+                file=sys.stdout,
+            )
+
+        approved = confirm(operations, plan_summary)
+        if not approved:
+            _populate_plan_summary(operations, summary)
+            summary.aborted = True
+            log.info("Sync aborted by user — no writes executed")
+            return summary
 
     # Phase 4 — Execute operations
     log.info("Phase 4: executing operations")
@@ -129,58 +165,135 @@ def sync_trees(
 # ---------------------------------------------------------------------------
 
 
-def _log_dry_run(
-    operations: list[SyncOp],
-    prov_a_name: str,
-    prov_b_name: str,
-    summary: SyncSummary,
-) -> None:
-    """Log what each operation would do, and populate the summary counts.
+def _has_write_op(operations: list[SyncOp]) -> bool:
+    """True if any op would cause a write on either side.
 
-    NOTE: The create count may be inflated on first sync because identity
-    matching (which pairs items by email/name across sides) only runs during
-    execution. Items that appear as creates on both sides may actually be
-    matched and merged instead.
+    SKIP_SUBTREE is purely informational (subtree matched stored state).
+    DELETE_ITEM with target_side='both' is a mapping cleanup (both sides
+    already deleted). Neither triggers a provider write, so a plan
+    consisting only of these should not prompt the user.
     """
+    for op in operations:
+        if op.op_type in (
+            OpType.CREATE_CONTAINER,
+            OpType.CREATE_ITEM,
+            OpType.MERGE_ITEM,
+            OpType.DELETE_CONTAINER,
+        ):
+            return True
+        if op.op_type == OpType.DELETE_ITEM and op.target_side != "both":
+            return True
+    return False
+
+
+def _annotation_for_op(
+    op: SyncOp,
+    provider_a: SyncProvider,
+    provider_b: SyncProvider,
+) -> str:
+    """Return '' or '    [!] notifications best-effort/unsupported' for an op."""
+
+    def cap_for(side: str, op_field: str) -> NotificationCapability:
+        prov = provider_b if side == "b" else provider_a
+        return getattr(prov.notification_policy, op_field)
+
+    caps: list[NotificationCapability] = []
+    if op.op_type == OpType.CREATE_ITEM:
+        caps.append(cap_for(op.target_side, "create_item"))
+    elif op.op_type == OpType.CREATE_CONTAINER:
+        # create_container is not in the policy struct; treat as unannotated.
+        return ""
+    elif op.op_type == OpType.DELETE_ITEM:
+        if op.target_side == "both":
+            return ""  # already gone on both sides, no write
+        caps.append(cap_for(op.target_side, "delete_item"))
+    elif op.op_type == OpType.DELETE_CONTAINER:
+        caps.append(cap_for(op.target_side, "delete_container"))
+    elif op.op_type == OpType.MERGE_ITEM:
+        # Merge may update either side; consider both.
+        caps.append(provider_a.notification_policy.update_item)
+        caps.append(provider_b.notification_policy.update_item)
+    else:
+        return ""
+
+    worst = NotificationCapability.SUPPRESSED
+    for c in caps:
+        if c is NotificationCapability.UNSUPPORTED:
+            worst = NotificationCapability.UNSUPPORTED
+            break
+        if c is NotificationCapability.BEST_EFFORT:
+            worst = NotificationCapability.BEST_EFFORT
+    if worst is NotificationCapability.SUPPRESSED:
+        return ""
+    return f"    [!] notifications {worst.value}"
+
+
+def _format_plan(
+    operations: list[SyncOp],
+    provider_a: SyncProvider,
+    provider_b: SyncProvider,
+) -> list[str]:
+    """Produce one 'PLAN ...' line per op, with optional suppression annotation."""
+    lines: list[str] = []
+    for op in operations:
+        suffix = _annotation_for_op(op, provider_a, provider_b)
+        if op.op_type == OpType.SKIP_SUBTREE:
+            base = f"PLAN SKIP_SUBTREE {op.node_id}"
+        elif op.op_type == OpType.CREATE_CONTAINER:
+            target = provider_b.name if op.target_side == "b" else provider_a.name
+            base = f'PLAN CREATE_CONTAINER "{op.container_name or op.node_id}" on {target}'
+        elif op.op_type == OpType.CREATE_ITEM:
+            target = provider_b.name if op.target_side == "b" else provider_a.name
+            base = f"PLAN CREATE_ITEM {op.node_id} on {target}"
+        elif op.op_type == OpType.MERGE_ITEM:
+            base = f"PLAN MERGE_ITEM {op.node_id} <-> {op.paired_node_id}"
+        elif op.op_type == OpType.DELETE_ITEM:
+            if op.target_side == "both":
+                base = f"PLAN DELETE_ITEM {op.node_id} <-> {op.paired_node_id} (both gone)"
+            else:
+                target = provider_b.name if op.target_side == "b" else provider_a.name
+                base = f"PLAN DELETE_ITEM {op.node_id} on {target}"
+        elif op.op_type == OpType.DELETE_CONTAINER:
+            target = provider_b.name if op.target_side == "b" else provider_a.name
+            base = f"PLAN DELETE_CONTAINER {op.node_id} on {target}"
+        else:
+            base = f"PLAN {op.op_type.value} {op.node_id}"
+        lines.append(base + suffix)
+    return lines
+
+
+def _populate_plan_summary(operations: list[SyncOp], summary: SyncSummary) -> None:
+    """Populate plan counts onto a summary (mutating)."""
     from collections import Counter
 
     counts = Counter(op.op_type for op in operations)
-    creates_a = sum(1 for op in operations if op.op_type == OpType.CREATE_ITEM and op.target_side == "a")
-    creates_b = sum(1 for op in operations if op.op_type == OpType.CREATE_ITEM and op.target_side == "b")
     summary.created = counts.get(OpType.CREATE_ITEM, 0)
     summary.deleted = counts.get(OpType.DELETE_ITEM, 0)
     summary.updated = counts.get(OpType.MERGE_ITEM, 0)
     summary.containers = counts.get(OpType.CREATE_CONTAINER, 0)
     summary.skipped = counts.get(OpType.SKIP_SUBTREE, 0)
 
+
+def _log_dry_run(
+    operations: list[SyncOp],
+    provider_a: SyncProvider,
+    provider_b: SyncProvider,
+    summary: SyncSummary,
+) -> None:
+    """Log the plan and populate summary counts. Called from sync_trees when dry_run=True."""
+    lines = _format_plan(operations, provider_a, provider_b)
+    for line in lines:
+        log.info("[dry-run] %s", line)
+    _populate_plan_summary(operations, summary)
+    creates_a = sum(1 for op in operations if op.op_type == OpType.CREATE_ITEM and op.target_side == "a")
+    creates_b = sum(1 for op in operations if op.op_type == OpType.CREATE_ITEM and op.target_side == "b")
     if creates_a > 0 and creates_b > 0:
         log.info(
             "[dry-run] NOTE: %d creates on %s + %d creates on %s — "
             "identity matching may reduce this (items with shared emails "
             "will be merged instead of duplicated)",
-            creates_b, prov_a_name, creates_a, prov_b_name,
+            creates_b, provider_a.name, creates_a, provider_b.name,
         )
-
-    for op in operations:
-        if op.op_type == OpType.SKIP_SUBTREE:
-            log.info("[dry-run] SKIP subtree %s", op.node_id)
-        elif op.op_type == OpType.CREATE_CONTAINER:
-            target = prov_b_name if op.target_side == "b" else prov_a_name
-            log.info("[dry-run] CREATE container %r on %s", op.container_name, target)
-        elif op.op_type == OpType.CREATE_ITEM:
-            target = prov_b_name if op.target_side == "b" else prov_a_name
-            log.info("[dry-run] CREATE item %s on %s", op.node_id, target)
-        elif op.op_type == OpType.MERGE_ITEM:
-            log.info("[dry-run] MERGE item %s ↔ %s", op.node_id, op.paired_node_id)
-        elif op.op_type == OpType.DELETE_ITEM:
-            if op.target_side == "both":
-                log.info("[dry-run] DELETE (both gone) %s ↔ %s", op.node_id, op.paired_node_id)
-            else:
-                target = prov_b_name if op.target_side == "b" else prov_a_name
-                log.info("[dry-run] DELETE item %s on %s", op.node_id, target)
-        elif op.op_type == OpType.DELETE_CONTAINER:
-            target = prov_b_name if op.target_side == "b" else prov_a_name
-            log.info("[dry-run] DELETE container %s on %s", op.node_id, target)
 
 
 # ---------------------------------------------------------------------------
