@@ -2,8 +2,9 @@
 when summary + dtstart_utc are both present, and leaves it absent otherwise."""
 from __future__ import annotations
 
+from groupware_sync_calendar.adapters.caldav_adapter import _ical_to_sync_item
+from groupware_sync_calendar.adapters.graph_adapter import _graph_to_sync_item
 from groupware_sync_calendar.adapters.jmap_adapter import _jmap_to_sync_item
-
 
 # -- JMAP ----------------------------------------------------------------------
 
@@ -58,9 +59,6 @@ def test_jmap_populates_content_key_when_timezone_missing():
 
 # -- Graph ---------------------------------------------------------------------
 
-from groupware_sync_calendar.adapters.graph_adapter import _graph_to_sync_item  # noqa: E402
-
-
 def test_graph_populates_content_key_when_subject_and_start_present():
     raw = {
         "id": "graph-1",
@@ -95,9 +93,6 @@ def test_graph_omits_content_key_when_start_missing():
 
 
 # -- CalDAV --------------------------------------------------------------------
-
-from groupware_sync_calendar.adapters.caldav_adapter import _ical_to_sync_item  # noqa: E402
-
 
 def _ical(summary: str = "Lunch", include_dtstart: bool = True) -> str:
     body = [
