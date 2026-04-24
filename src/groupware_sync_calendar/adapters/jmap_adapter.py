@@ -77,6 +77,29 @@ _RRULE_DAY_TO_JSCAL: dict[str, str] = {v: k for k, v in _JSCAL_DAY_TO_RRULE.item
 _VALID_FREQ = {"YEARLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "MINUTELY", "SECONDLY"}
 
 
+def _tree_identity_key(event: dict[str, Any]) -> Optional[str]:
+    """Derive a SyncNode.identity_key for a JMAP calendar event at tree-build
+    time. Prefers a content_key (title + UTC start) so pairing survives
+    Graph's iCalUId reassignment; falls back to uid when summary or start
+    isn't available.
+    """
+    title = event.get("title")
+    start_str = event.get("start")
+    tz_name = event.get("timeZone")
+    dtstart_utc: Optional[str] = None
+    if start_str and tz_name:
+        try:
+            dtstart_utc = tz.to_utc(start_str, tz_name)
+        except Exception:  # noqa: BLE001
+            dtstart_utc = None
+    elif start_str:
+        dtstart_utc = start_str if start_str.endswith("Z") else start_str + "Z"
+    ck = calendar_content_key(title, dtstart_utc)
+    if ck is not None:
+        return compute_identity_key({"content_key": ck}, ["content_key"])
+    return compute_identity_key({"uid": event.get("uid")}, ["uid"])
+
+
 def _redact_event_payload(event: dict[str, Any]) -> dict[str, Any]:
     """Return a deep copy of *event* with free-text fields redacted.
 
@@ -283,7 +306,11 @@ class JmapCalendarAdapter(SyncProvider):
                     {
                         "accountId": self._account_id,
                         "ids": chunk,
-                        "properties": ["id", "updated", "uid", "calendarIds"],
+                        "properties": [
+                            "id", "updated", "uid", "calendarIds",
+                            # For content_key-based tree identity:
+                            "title", "start", "timeZone",
+                        ],
                     },
                     "g0",
                 ],
@@ -301,9 +328,7 @@ class JmapCalendarAdapter(SyncProvider):
                         cal_node = cal_nodes_by_id.get(cal_id)
                         if cal_node is None:
                             continue
-                        idk = compute_identity_key(
-                            {"uid": event.get("uid")}, ["uid"]
-                        )
+                        idk = _tree_identity_key(event)
                         cal_node.children.append(SyncNode(
                             node_id=event["id"],
                             name=event["id"],
