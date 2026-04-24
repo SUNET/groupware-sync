@@ -100,6 +100,30 @@ _PARTSTAT_TO_RESPONSE: dict[str, str] = {
 }
 
 
+def _tree_identity_key(event: dict[str, Any]) -> Optional[str]:
+    """Derive a SyncNode.identity_key for a Graph calendar event at
+    tree-build time. Prefers content_key (subject + UTC start) so that
+    events the Graph service created with a freshly-assigned iCalUId
+    still pair with their Stalwart counterpart. Falls back to iCalUId
+    when subject or start is missing from the slim Graph projection.
+    """
+    subject = event.get("subject")
+    start = event.get("start") or {}
+    dt_local = start.get("dateTime")
+    win_tz = start.get("timeZone")
+    dtstart_utc: Optional[str] = None
+    if dt_local and win_tz:
+        try:
+            iana_tz = windows_to_iana(win_tz)
+            dtstart_utc = to_utc(dt_local, iana_tz)
+        except Exception:  # noqa: BLE001
+            dtstart_utc = None
+    ck = calendar_content_key(subject, dtstart_utc)
+    if ck is not None:
+        return compute_identity_key({"content_key": ck}, ["content_key"])
+    return compute_identity_key({"uid": event.get("iCalUId")}, ["uid"])
+
+
 def _priority_to_importance(priority: int) -> str:
     """Map iCalendar priority (0-9) to Graph importance."""
     if priority == 0:
@@ -246,7 +270,8 @@ class GraphCalendarAdapter(SyncProvider):
 
             events_url: Optional[str] = (
                 f"/me/calendars/{cal['id']}/events"
-                f"?$select=id,lastModifiedDateTime,iCalUId&$top=100"
+                f"?$select=id,lastModifiedDateTime,iCalUId,subject,start"
+                f"&$top=100"
             )
             while events_url:
                 r = self._request("GET", events_url)
@@ -255,17 +280,13 @@ class GraphCalendarAdapter(SyncProvider):
                 for event in data.get("value", []):
                     # Graph's iCalUId is server-assigned and read-only —
                     # values we POST during create are silently replaced.
-                    # Tree-level uid pairing still works for events whose
-                    # iCalUId Stalwart happens to share (because Stalwart
-                    # echoed that iCalUId verbatim on create, or both
-                    # sides received the event from the same external
-                    # ICS source). For Graph-created events the uid
-                    # diverges; CALENDAR_EVENT_SPEC.identity_fields gains
-                    # "content_key" as an execute-time fallback — see
+                    # That makes uid unreliable as a cross-provider
+                    # identity. Derive a content_key-based identity from
+                    # subject + UTC start so both sides pair on content
+                    # regardless of what Graph did to the uid. Fall back
+                    # to iCalUId when subject or start is missing. See
                     # src/groupware_sync_calendar/identity.py.
-                    idk = compute_identity_key(
-                        {"uid": event.get("iCalUId")}, ["uid"]
-                    )
+                    idk = _tree_identity_key(event)
                     leaf = SyncNode(
                         node_id=event["id"],
                         name=event["id"],
