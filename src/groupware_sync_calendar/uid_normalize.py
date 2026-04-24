@@ -11,8 +11,7 @@ of the same event produce different identity keys and fail to pair. This
 module provides one pure function that strips the wrapper when present,
 returning the inner UID, so both sides hash to the same key.
 
-See issue #4 and
-docs:2026-04-23-post-pr2-stalwart-quirks-design.md for background.
+See issue #4 for background.
 """
 from __future__ import annotations
 
