@@ -32,6 +32,7 @@ from groupware_sync.provider import (
     SyncProvider,
 )
 from groupware_sync_calendar import tz
+from groupware_sync_calendar.identity import calendar_content_key
 
 log = logging.getLogger(__name__)
 
@@ -1027,6 +1028,13 @@ def _jmap_to_sync_item(event: dict[str, Any]) -> SyncItem:
             updated_at = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         except (ValueError, TypeError):
             pass
+
+    # Secondary identity for execute-time pairing when uid doesn't match
+    # across providers (e.g. Graph-reassigned iCalUId). See
+    # src/groupware_sync_calendar/identity.py.
+    ck = calendar_content_key(fields.get("summary"), fields.get("dtstart_utc"))
+    if ck is not None:
+        fields["content_key"] = ck
 
     return SyncItem(
         provider_id=event.get("id", ""),
