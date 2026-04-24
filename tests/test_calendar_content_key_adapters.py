@@ -94,7 +94,7 @@ def test_graph_omits_content_key_when_start_missing():
 
 # -- CalDAV --------------------------------------------------------------------
 
-def _ical(summary: str = "Lunch", include_dtstart: bool = True) -> str:
+def _ical(summary: str | None = "Lunch", include_dtstart: bool = True) -> str:
     body = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",

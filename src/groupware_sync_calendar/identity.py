@@ -1,19 +1,25 @@
-"""Content-based fallback identity for calendar events.
+"""Content-based identity for calendar events.
 
-Graph's iCalUId is server-assigned and read-only: any value we POST is
-silently replaced. That means ``uid``-based identity pairing (PR #2)
-fails for every event our sync creates on Graph — on the next run,
-Graph.iCalUId != Stalwart.uid and the tree engine sees the two sides
-as orphans.
+Microsoft Graph assigns a fresh ``iCalUId`` to every event created via
+the API (the REST field is documented as read-only; the value a client
+POSTs is silently discarded). A 2026-04-24 round-trip probe confirmed
+this: send ``foo@bar.invalid``, get back a freshly generated GOID.
 
-The engine's ``_identity_match`` (in ``groupware_sync.engine``) already
-has a content-based fallback path used by the contacts type spec. This
-module provides the calendar equivalent: a stable (summary, start-time)
-key used by ``CALENDAR_EVENT_SPEC.identity_fields`` when the uid key
-doesn't match.
+Consequence: ``uid``-based identity pairing (PR #2) cannot match a
+Stalwart-originated event to its Graph counterpart after first sync —
+Stalwart stores the uid we sent, Graph stores its own GOID, and
+``hash(uid_a) != hash(uid_b)``. The tree engine then sees the same
+event as orphans on both sides.
 
-See docs:2026-04-24-calendar-content-fallback-pairing-design.md for the
-full rationale and the live-probe evidence.
+The fix is a cross-provider identity derived from content — title +
+normalised UTC start. Adapters use this as the primary tree-level
+identity when it can be computed, falling back to uid only when
+summary or start is missing. ``CALENDAR_EVENT_SPEC.identity_fields``
+also lists ``content_key`` so the engine's execute-time
+``_identity_match`` catches edge cases where the tree-level fast path
+missed.
+
+See SUNET/groupware-sync PR #9 for the design + live-probe evidence.
 """
 from __future__ import annotations
 
