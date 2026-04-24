@@ -22,7 +22,6 @@ from groupware_sync_calendar.adapters.jmap_adapter import (
     _redact_event_payload,
 )
 
-
 # -- Redaction helper unit tests ------------------------------------------------
 
 def _sample_event() -> dict[str, Any]:
