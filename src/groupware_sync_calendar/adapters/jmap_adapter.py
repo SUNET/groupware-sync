@@ -9,6 +9,8 @@ contacts JMAP adapter.
 """
 from __future__ import annotations
 
+import copy
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -73,6 +75,43 @@ _RRULE_DAY_TO_JSCAL: dict[str, str] = {v: k for k, v in _JSCAL_DAY_TO_RRULE.item
 
 # RRULE FREQ values that are valid
 _VALID_FREQ = {"YEARLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "MINUTELY", "SECONDLY"}
+
+
+def _redact_event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of *event* with free-text fields redacted.
+
+    Used by the create_item / update_item error branches to emit a debug
+    payload that names structural properties (which is where invalid-property
+    errors almost always originate) without leaking meeting titles,
+    descriptions, attendee emails, or location names into logs.
+
+    Redacted keys:
+      * top-level ``title`` and ``description``
+      * ``participants[*].name``
+      * ``participants[*].sendTo.imip`` (kept as ``"mailto:<redacted>"``)
+      * ``locations[*].name``
+    """
+    out = copy.deepcopy(event)
+    if "title" in out:
+        out["title"] = "<redacted>"
+    if "description" in out:
+        out["description"] = "<redacted>"
+    participants = out.get("participants")
+    if isinstance(participants, dict):
+        for p in participants.values():
+            if not isinstance(p, dict):
+                continue
+            if "name" in p:
+                p["name"] = "<redacted>"
+            send_to = p.get("sendTo")
+            if isinstance(send_to, dict) and "imip" in send_to:
+                send_to["imip"] = "mailto:<redacted>"
+    locations = out.get("locations")
+    if isinstance(locations, dict):
+        for loc in locations.values():
+            if isinstance(loc, dict) and "name" in loc:
+                loc["name"] = "<redacted>"
+    return out
 
 
 class JmapCalendarAdapter(SyncProvider):
