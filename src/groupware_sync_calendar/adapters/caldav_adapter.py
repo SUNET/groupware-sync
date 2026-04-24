@@ -31,6 +31,7 @@ from groupware_sync.provider import (
     SyncProvider,
 )
 from groupware_sync_calendar import tz
+from groupware_sync_calendar.uid_normalize import normalize_outlook_goid
 
 log = logging.getLogger(__name__)
 
@@ -204,7 +205,9 @@ class CalDavCalendarAdapter(SyncProvider):
                 basename = href.rsplit("/", 1)[-1]
                 uid = basename[:-4] if basename.endswith(".ics") else None
                 idk = (
-                    compute_identity_key({"uid": uid}, ["uid"])
+                    compute_identity_key(
+                        {"uid": normalize_outlook_goid(uid)}, ["uid"]
+                    )
                     if uid else None
                 )
                 leaf = SyncNode(
