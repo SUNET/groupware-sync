@@ -100,6 +100,24 @@ def _tree_identity_key(event: dict[str, Any]) -> Optional[str]:
     return compute_identity_key({"uid": event.get("uid")}, ["uid"])
 
 
+def _format_set_error(prefix: str, err: dict[str, Any]) -> str:
+    """Format a JMAP /set error for a human-readable exception message.
+
+    Includes the ``properties`` array when present — some servers (notably
+    Stalwart) return ``invalidProperties`` with description "Invalid
+    property." and put the offending field names in ``properties``. Without
+    surfacing that list, operators have to probe the API to figure out
+    which field the server rejected.
+    """
+    t = err.get("type", "unknown")
+    desc = err.get("description", "")
+    parts = [f"{prefix}: {t} — {desc}"]
+    props = err.get("properties")
+    if props:
+        parts.append(f"(properties: {list(props)})")
+    return " ".join(parts)
+
+
 def _redact_event_payload(event: dict[str, Any]) -> dict[str, Any]:
     """Return a deep copy of *event* with free-text fields redacted.
 
@@ -484,10 +502,9 @@ class JmapCalendarAdapter(SyncProvider):
                             "JMAP create failed — request payload: %s",
                             json.dumps(_redact_event_payload(event), default=repr),
                         )
-                    raise ValueError(
-                        f"JMAP create calendar event failed: "
-                        f"{err.get('type', 'unknown')} — {err.get('description', '')}"
-                    )
+                    raise ValueError(_format_set_error(
+                        "JMAP create calendar event failed", err,
+                    ))
                 created = result[1].get("created", {})
                 new_item = created.get("new1", {})
                 new_id = new_item["id"]
