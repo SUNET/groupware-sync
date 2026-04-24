@@ -266,9 +266,16 @@ class GraphCalendarAdapter(SyncProvider):
         # — cause not fully understood; likely import artefacts). The tree
         # engine's _bucket demotes colliding identity_keys to "unpairable",
         # which then plans CREATEs that Stalwart rejects (it DOES enforce
-        # account-wide uid uniqueness). Dedupe here by iCalUId so only the
-        # first-seen row becomes a leaf, letting the rest of the pipeline
-        # treat the event as a single logical entity.
+        # account-wide uid uniqueness). Dedupe here by iCalUId so only one
+        # row becomes a leaf, letting the rest of the pipeline treat the
+        # event as a single logical entity.
+        #
+        # $orderby lastModifiedDateTime desc,id asc makes the winner
+        # deterministic across runs: the freshest row wins; stable
+        # tie-break by id if two duplicates share a timestamp. Without
+        # $orderby, Graph's response order can flip between runs and the
+        # "winner" flips with it, which would churn ItemMapping rows in
+        # the state DB.
         for cal in calendars:
             cal_node = SyncNode(
                 node_id=cal["id"],
@@ -279,6 +286,7 @@ class GraphCalendarAdapter(SyncProvider):
             events_url: Optional[str] = (
                 f"/me/calendars/{cal['id']}/events"
                 f"?$select=id,lastModifiedDateTime,iCalUId,subject,start"
+                f"&$orderby=lastModifiedDateTime%20desc,id%20asc"
                 f"&$top=100"
             )
             seen_icaluids: set[str] = set()
