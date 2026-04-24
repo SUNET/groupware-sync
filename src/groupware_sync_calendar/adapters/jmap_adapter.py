@@ -494,6 +494,10 @@ class JmapCalendarAdapter(SyncProvider):
                         item.provider_id,
                         not_updated[item.provider_id],
                     )
+                    log.debug(
+                        "JMAP update failed — request payload: %s",
+                        json.dumps(_redact_event_payload(event), default=repr),
+                    )
         # Fetch the new fingerprint
         fp = self._get_item_fingerprint(item.provider_id)
         return fp
