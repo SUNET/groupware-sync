@@ -260,7 +260,15 @@ class GraphCalendarAdapter(SyncProvider):
             else:
                 calendars[0]["name"] = "__synced__"
 
-        # 4. For each calendar, fetch event IDs + timestamps (lightweight)
+        # 4. For each calendar, fetch event IDs + timestamps (lightweight).
+        # Graph occasionally returns two rows with the same iCalUId in the
+        # same calendar (observed in the wild for a small subset of events
+        # — cause not fully understood; likely import artefacts). The tree
+        # engine's _bucket demotes colliding identity_keys to "unpairable",
+        # which then plans CREATEs that Stalwart rejects (it DOES enforce
+        # account-wide uid uniqueness). Dedupe here by iCalUId so only the
+        # first-seen row becomes a leaf, letting the rest of the pipeline
+        # treat the event as a single logical entity.
         for cal in calendars:
             cal_node = SyncNode(
                 node_id=cal["id"],
@@ -273,11 +281,19 @@ class GraphCalendarAdapter(SyncProvider):
                 f"?$select=id,lastModifiedDateTime,iCalUId,subject,start"
                 f"&$top=100"
             )
+            seen_icaluids: set[str] = set()
+            dup_count = 0
             while events_url:
                 r = self._request("GET", events_url)
                 r.raise_for_status()
                 data = r.json()
                 for event in data.get("value", []):
+                    ical = event.get("iCalUId")
+                    if ical and ical in seen_icaluids:
+                        dup_count += 1
+                        continue
+                    if ical:
+                        seen_icaluids.add(ical)
                     # Graph's iCalUId is server-assigned and read-only —
                     # values we POST during create are silently replaced.
                     # That makes uid unreliable as a cross-provider
@@ -299,6 +315,11 @@ class GraphCalendarAdapter(SyncProvider):
                 next_link = data.get("@odata.nextLink")
                 events_url = (
                     next_link if next_link and self._validate_url(next_link) else None
+                )
+            if dup_count:
+                log.info(
+                    "graph calendar %r: %d duplicate-iCalUId event rows skipped",
+                    cal["name"], dup_count,
                 )
 
             root.children.append(cal_node)
