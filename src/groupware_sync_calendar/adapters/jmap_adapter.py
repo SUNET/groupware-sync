@@ -455,10 +455,11 @@ class JmapCalendarAdapter(SyncProvider):
                 not_created = result[1].get("notCreated", {})
                 if "new1" in not_created:
                     err = not_created["new1"]
-                    log.debug(
-                        "JMAP create failed — request payload: %s",
-                        json.dumps(_redact_event_payload(event), default=repr),
-                    )
+                    if log.isEnabledFor(logging.DEBUG):
+                        log.debug(
+                            "JMAP create failed — request payload: %s",
+                            json.dumps(_redact_event_payload(event), default=repr),
+                        )
                     raise ValueError(
                         f"JMAP create calendar event failed: "
                         f"{err.get('type', 'unknown')} — {err.get('description', '')}"
@@ -494,10 +495,11 @@ class JmapCalendarAdapter(SyncProvider):
                         item.provider_id,
                         not_updated[item.provider_id],
                     )
-                    log.debug(
-                        "JMAP update failed — request payload: %s",
-                        json.dumps(_redact_event_payload(event), default=repr),
-                    )
+                    if log.isEnabledFor(logging.DEBUG):
+                        log.debug(
+                            "JMAP update failed — request payload: %s",
+                            json.dumps(_redact_event_payload(event), default=repr),
+                        )
         # Fetch the new fingerprint
         fp = self._get_item_fingerprint(item.provider_id)
         return fp
