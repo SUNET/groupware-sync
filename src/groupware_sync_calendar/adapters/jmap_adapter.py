@@ -457,7 +457,7 @@ class JmapCalendarAdapter(SyncProvider):
                     err = not_created["new1"]
                     log.debug(
                         "JMAP create failed — request payload: %s",
-                        json.dumps(_redact_event_payload(event)),
+                        json.dumps(_redact_event_payload(event), default=repr),
                     )
                     raise ValueError(
                         f"JMAP create calendar event failed: "
