@@ -31,7 +31,6 @@ from groupware_sync.provider import (
 )
 from groupware_sync_calendar.rrule import graph_recurrence_to_rrule, rrule_to_graph_recurrence
 from groupware_sync_calendar.tz import from_utc, iana_to_windows, to_utc, windows_to_iana
-from groupware_sync_calendar.uid_normalize import normalize_outlook_goid
 
 log = logging.getLogger(__name__)
 
@@ -254,8 +253,7 @@ class GraphCalendarAdapter(SyncProvider):
                 data = r.json()
                 for event in data.get("value", []):
                     idk = compute_identity_key(
-                        {"uid": normalize_outlook_goid(event.get("iCalUId"))},
-                        ["uid"],
+                        {"uid": event.get("iCalUId")}, ["uid"]
                     )
                     leaf = SyncNode(
                         node_id=event["id"],
