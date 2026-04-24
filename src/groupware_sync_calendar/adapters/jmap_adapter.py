@@ -972,10 +972,22 @@ def _jmap_to_sync_item(event: dict[str, Any]) -> SyncItem:
     if event.get("updated"):
         fields["updated"] = event["updated"]
 
-    # Recurrence rules
-    rrules = event.get("recurrenceRules")
-    if rrules and isinstance(rrules, list) and len(rrules) > 0:
-        rrule_text = _jscal_rrule_to_text(rrules[0])
+    # Recurrence rules. RFC 8984 §4.3.3 defines the property as
+    # `recurrenceRules` (plural, array of RecurrenceRule). Stalwart
+    # currently serves and accepts only the singular `recurrenceRule`
+    # spelling as either a scalar object or an array. Read both names
+    # so we survive either shape.
+    rrule_single = event.get("recurrenceRule")
+    rrules_plural = event.get("recurrenceRules")
+    candidate: Any = None
+    if isinstance(rrule_single, dict):
+        candidate = rrule_single
+    elif isinstance(rrule_single, list) and rrule_single:
+        candidate = rrule_single[0]
+    elif isinstance(rrules_plural, list) and rrules_plural:
+        candidate = rrules_plural[0]
+    if isinstance(candidate, dict):
+        rrule_text = _jscal_rrule_to_text(candidate)
         if rrule_text:
             fields["rrule"] = rrule_text
 
@@ -1193,12 +1205,18 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
     if fields.get("sequence") is not None:
         event["sequence"] = int(fields["sequence"])
 
-    # Recurrence rules
+    # Recurrence rules. RFC 8984 §4.3.3 defines the property as
+    # `recurrenceRules` (plural, array). Stalwart rejects that name
+    # with `invalidProperties [recurrenceRules]` and only accepts the
+    # singular `recurrenceRule` as a scalar object. Emit the singular
+    # form so the create/update succeeds against Stalwart; other JMAP
+    # servers that follow the spec will simply ignore it, and we also
+    # read both names on the way back (see _jmap_to_sync_item).
     rrule_text = fields.get("rrule")
     if rrule_text:
         rule = _text_to_jscal_rrule(rrule_text)
         if rule.get("frequency"):
-            event["recurrenceRules"] = [rule]
+            event["recurrenceRule"] = rule
 
     # Exdates -> recurrenceOverrides (exclusions)
     exdates = fields.get("exdates")
