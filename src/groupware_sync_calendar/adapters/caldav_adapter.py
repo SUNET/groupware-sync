@@ -31,6 +31,7 @@ from groupware_sync.provider import (
     SyncProvider,
 )
 from groupware_sync_calendar import tz
+from groupware_sync_calendar.identity import calendar_content_key
 
 log = logging.getLogger(__name__)
 
@@ -201,6 +202,16 @@ class CalDavCalendarAdapter(SyncProvider):
                 # widespread CalDAV convention "<UID>.ics" (matches what
                 # our own create_item path writes). Lets CalDAV↔CalDAV
                 # pairs match by RFC 5545 UID like JMAP↔Graph do.
+                #
+                # The JMAP and Graph adapters switched to a content_key
+                # (summary + UTC start) as the primary tree-level
+                # identity because Graph reassigns iCalUId on create.
+                # CalDAV doesn't have that problem (clients own the
+                # UID), and fetching the VEVENT body just to derive
+                # content_key at tree time would be a significant perf
+                # regression. CalDAV↔{JMAP,Graph} divergent-uid cases
+                # are still picked up by the execute-time content_key
+                # fallback listed in CALENDAR_EVENT_SPEC.identity_fields.
                 basename = href.rsplit("/", 1)[-1]
                 uid = basename[:-4] if basename.endswith(".ics") else None
                 idk = (
@@ -931,6 +942,12 @@ def _ical_to_sync_item(ical_text: str, href: str, etag: str) -> SyncItem:
     # Conference (RFC 7986)
     for conf_prop in event.contents.get("conference", []):
         fields["conference"] = conf_prop.value
+
+    # Secondary identity for execute-time pairing when uid doesn't match
+    # across providers. See src/groupware_sync_calendar/identity.py.
+    ck = calendar_content_key(fields.get("summary"), fields.get("dtstart_utc"))
+    if ck is not None:
+        fields["content_key"] = ck
 
     return SyncItem(
         provider_id=href,

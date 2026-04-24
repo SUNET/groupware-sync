@@ -40,6 +40,14 @@ CALENDAR_EVENT_SPEC = TypeSpec(
         FieldDef("color", MergeStrategy.SCALAR),
         FieldDef("conference", MergeStrategy.SCALAR),
     ],
-    identity_fields=["uid"],
+    # Calendar pairing prefers "content_key" (summary + normalised UTC
+    # start) over "uid" because Graph reassigns iCalUId on create, so
+    # uid cannot anchor a stable cross-provider identity. The JMAP and
+    # Graph adapters compute a content-based SyncNode.identity_key at
+    # tree-build time, falling back to uid only when summary/start are
+    # missing. Execute-time _identity_match also consults both fields
+    # as a belt-and-braces for items the tree layer missed. See
+    # src/groupware_sync_calendar/identity.py.
+    identity_fields=["uid", "content_key"],
     timestamp_field="updated",
 )

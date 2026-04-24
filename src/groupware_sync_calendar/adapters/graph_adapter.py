@@ -29,6 +29,7 @@ from groupware_sync.provider import (
     NotificationPolicy,
     SyncProvider,
 )
+from groupware_sync_calendar.identity import calendar_content_key
 from groupware_sync_calendar.rrule import graph_recurrence_to_rrule, rrule_to_graph_recurrence
 from groupware_sync_calendar.tz import from_utc, iana_to_windows, to_utc, windows_to_iana
 
@@ -97,6 +98,30 @@ _PARTSTAT_TO_RESPONSE: dict[str, str] = {
     "declined": "declined",
     "tentative": "tentativelyAccepted",
 }
+
+
+def _tree_identity_key(event: dict[str, Any]) -> Optional[str]:
+    """Derive a SyncNode.identity_key for a Graph calendar event at
+    tree-build time. Prefers content_key (subject + UTC start) so that
+    events the Graph service created with a freshly-assigned iCalUId
+    still pair with their Stalwart counterpart. Falls back to iCalUId
+    when subject or start is missing from the slim Graph projection.
+    """
+    subject = event.get("subject")
+    start = event.get("start") or {}
+    dt_local = start.get("dateTime")
+    win_tz = start.get("timeZone")
+    dtstart_utc: Optional[str] = None
+    if dt_local and win_tz:
+        try:
+            iana_tz = windows_to_iana(win_tz)
+            dtstart_utc = to_utc(dt_local, iana_tz)
+        except Exception:  # noqa: BLE001
+            dtstart_utc = None
+    ck = calendar_content_key(subject, dtstart_utc)
+    if ck is not None:
+        return compute_identity_key({"content_key": ck}, ["content_key"])
+    return compute_identity_key({"uid": event.get("iCalUId")}, ["uid"])
 
 
 def _priority_to_importance(priority: int) -> str:
@@ -245,16 +270,23 @@ class GraphCalendarAdapter(SyncProvider):
 
             events_url: Optional[str] = (
                 f"/me/calendars/{cal['id']}/events"
-                f"?$select=id,lastModifiedDateTime,iCalUId&$top=100"
+                f"?$select=id,lastModifiedDateTime,iCalUId,subject,start"
+                f"&$top=100"
             )
             while events_url:
                 r = self._request("GET", events_url)
                 r.raise_for_status()
                 data = r.json()
                 for event in data.get("value", []):
-                    idk = compute_identity_key(
-                        {"uid": event.get("iCalUId")}, ["uid"]
-                    )
+                    # Graph's iCalUId is server-assigned and read-only —
+                    # values we POST during create are silently replaced.
+                    # That makes uid unreliable as a cross-provider
+                    # identity. Derive a content_key-based identity from
+                    # subject + UTC start so both sides pair on content
+                    # regardless of what Graph did to the uid. Fall back
+                    # to iCalUId when subject or start is missing. See
+                    # src/groupware_sync_calendar/identity.py.
+                    idk = _tree_identity_key(event)
                     leaf = SyncNode(
                         node_id=event["id"],
                         name=event["id"],
@@ -527,6 +559,14 @@ def _graph_to_sync_item(event: dict[str, Any]) -> SyncItem:
             )
         except (ValueError, TypeError):
             pass
+
+    # Secondary identity for execute-time pairing when uid doesn't match
+    # across providers. Graph reassigns iCalUId on create (read-only
+    # field), so Stalwart.uid and Graph.iCalUId diverge for events our
+    # sync originated. See src/groupware_sync_calendar/identity.py.
+    ck = calendar_content_key(fields.get("summary"), fields.get("dtstart_utc"))
+    if ck is not None:
+        fields["content_key"] = ck
 
     return SyncItem(
         provider_id=event["id"],
