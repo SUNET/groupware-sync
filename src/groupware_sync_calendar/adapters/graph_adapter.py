@@ -299,28 +299,12 @@ class GraphCalendarAdapter(SyncProvider):
                     next_link if next_link and self._validate_url(next_link) else None
                 )
 
-            # Stable dedupe: freshest (max lastModifiedDateTime) wins;
-            # tie-break by smallest id so the same row wins every run.
-            # Sort descending by (lastModifiedDateTime, -id-as-str) —
-            # easier expressed by sorting ascending on (-lmd, id) then
-            # picking first-seen.
-            all_events.sort(
-                key=lambda ev: (
-                    ev.get("lastModifiedDateTime", ""),
-                    # Invert id order by using the negative of its sort
-                    # position: a larger id sorts after a smaller one
-                    # ascending, so for a DESC outer sort we want the
-                    # smaller id to end up "later" (greater). Python's
-                    # tuple sort doesn't take a per-key direction, so
-                    # just reverse the whole list below.
-                    ev.get("id", ""),
-                ),
-                reverse=True,
-            )
-            # reverse=True gives (lmd desc, id desc) — we wanted id asc
-            # for tie-break. Post-process: for equal lmd, reverse only
-            # the id order among the group by sorting that slice asc.
-            # Simpler: use stable sort twice (Python's sort is stable).
+            # Dedupe winner rule: greatest lastModifiedDateTime wins;
+            # smallest id breaks a timestamp tie. Python's sort is
+            # stable, so sort twice — first by the tie-break key (id
+            # ascending), then by the primary key (lastModifiedDateTime
+            # descending). Entries with equal timestamps retain the
+            # id-ascending order established by the first sort.
             all_events.sort(key=lambda ev: ev.get("id", ""))
             all_events.sort(
                 key=lambda ev: ev.get("lastModifiedDateTime", ""),
