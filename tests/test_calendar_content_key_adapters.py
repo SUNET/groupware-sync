@@ -92,3 +92,42 @@ def test_graph_omits_content_key_when_start_missing():
     }
     item = _graph_to_sync_item(raw)
     assert "content_key" not in item.fields
+
+
+# -- CalDAV --------------------------------------------------------------------
+
+from groupware_sync_calendar.adapters.caldav_adapter import _ical_to_sync_item  # noqa: E402
+
+
+def _ical(summary: str = "Lunch", include_dtstart: bool = True) -> str:
+    body = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:caldav-uid-1",
+    ]
+    if summary is not None:
+        body.append(f"SUMMARY:{summary}")
+    if include_dtstart:
+        body.append("DTSTART:20260501T120000Z")
+        body.append("DTEND:20260501T130000Z")
+    body.append("END:VEVENT")
+    body.append("END:VCALENDAR")
+    return "\r\n".join(body) + "\r\n"
+
+
+def test_caldav_populates_content_key_when_summary_and_start_present():
+    item = _ical_to_sync_item(_ical(), "/cal/abc.ics", "etag-1")
+    assert item.fields.get("content_key") == "lunch|2026-05-01T12:00:00Z"
+
+
+def test_caldav_omits_content_key_when_summary_missing():
+    item = _ical_to_sync_item(_ical(summary=None), "/cal/abc.ics", "etag-1")
+    assert "content_key" not in item.fields
+
+
+def test_caldav_omits_content_key_when_start_missing():
+    item = _ical_to_sync_item(
+        _ical(include_dtstart=False), "/cal/abc.ics", "etag-1"
+    )
+    assert "content_key" not in item.fields
