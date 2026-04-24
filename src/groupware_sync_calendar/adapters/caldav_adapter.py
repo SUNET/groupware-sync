@@ -202,6 +202,16 @@ class CalDavCalendarAdapter(SyncProvider):
                 # widespread CalDAV convention "<UID>.ics" (matches what
                 # our own create_item path writes). Lets CalDAV↔CalDAV
                 # pairs match by RFC 5545 UID like JMAP↔Graph do.
+                #
+                # The JMAP and Graph adapters switched to a content_key
+                # (summary + UTC start) as the primary tree-level
+                # identity because Graph reassigns iCalUId on create.
+                # CalDAV doesn't have that problem (clients own the
+                # UID), and fetching the VEVENT body just to derive
+                # content_key at tree time would be a significant perf
+                # regression. CalDAV↔{JMAP,Graph} divergent-uid cases
+                # are still picked up by the execute-time content_key
+                # fallback listed in CALENDAR_EVENT_SPEC.identity_fields.
                 basename = href.rsplit("/", 1)[-1]
                 uid = basename[:-4] if basename.endswith(".ics") else None
                 idk = (
