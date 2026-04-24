@@ -29,6 +29,7 @@ from groupware_sync.provider import (
     NotificationPolicy,
     SyncProvider,
 )
+from groupware_sync_calendar.identity import calendar_content_key
 from groupware_sync_calendar.rrule import graph_recurrence_to_rrule, rrule_to_graph_recurrence
 from groupware_sync_calendar.tz import from_utc, iana_to_windows, to_utc, windows_to_iana
 
@@ -252,6 +253,16 @@ class GraphCalendarAdapter(SyncProvider):
                 r.raise_for_status()
                 data = r.json()
                 for event in data.get("value", []):
+                    # Graph's iCalUId is server-assigned and read-only —
+                    # values we POST during create are silently replaced.
+                    # Tree-level uid pairing still works for events whose
+                    # iCalUId Stalwart happens to share (because Stalwart
+                    # echoed that iCalUId verbatim on create, or both
+                    # sides received the event from the same external
+                    # ICS source). For Graph-created events the uid
+                    # diverges; CALENDAR_EVENT_SPEC.identity_fields gains
+                    # "content_key" as an execute-time fallback — see
+                    # src/groupware_sync_calendar/identity.py.
                     idk = compute_identity_key(
                         {"uid": event.get("iCalUId")}, ["uid"]
                     )
@@ -527,6 +538,14 @@ def _graph_to_sync_item(event: dict[str, Any]) -> SyncItem:
             )
         except (ValueError, TypeError):
             pass
+
+    # Secondary identity for execute-time pairing when uid doesn't match
+    # across providers. Graph reassigns iCalUId on create (read-only
+    # field), so Stalwart.uid and Graph.iCalUId diverge for events our
+    # sync originated. See src/groupware_sync_calendar/identity.py.
+    ck = calendar_content_key(fields.get("summary"), fields.get("dtstart_utc"))
+    if ck is not None:
+        fields["content_key"] = ck
 
     return SyncItem(
         provider_id=event["id"],

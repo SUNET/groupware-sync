@@ -54,3 +54,41 @@ def test_jmap_populates_content_key_when_timezone_missing():
     item = _jmap_to_sync_item(raw)
     # dtstart_utc gets a trailing Z appended in the no-tz branch.
     assert item.fields.get("content_key") == "lunch|2026-05-01T12:00:00Z"
+
+
+# -- Graph ---------------------------------------------------------------------
+
+from groupware_sync_calendar.adapters.graph_adapter import _graph_to_sync_item  # noqa: E402
+
+
+def test_graph_populates_content_key_when_subject_and_start_present():
+    raw = {
+        "id": "graph-1",
+        "iCalUId": "040000008200E00074C5B7101A82E008...",
+        "subject": "Lunch",
+        "start": {"dateTime": "2026-05-01T12:00:00", "timeZone": "UTC"},
+        "end":   {"dateTime": "2026-05-01T13:00:00", "timeZone": "UTC"},
+    }
+    item = _graph_to_sync_item(raw)
+    assert item.fields.get("content_key") == "lunch|2026-05-01T12:00:00Z"
+
+
+def test_graph_omits_content_key_when_subject_missing():
+    raw = {
+        "id": "graph-1",
+        "iCalUId": "x",
+        "start": {"dateTime": "2026-05-01T12:00:00", "timeZone": "UTC"},
+        "end":   {"dateTime": "2026-05-01T13:00:00", "timeZone": "UTC"},
+    }
+    item = _graph_to_sync_item(raw)
+    assert "content_key" not in item.fields
+
+
+def test_graph_omits_content_key_when_start_missing():
+    raw = {
+        "id": "graph-1",
+        "iCalUId": "x",
+        "subject": "Lunch",
+    }
+    item = _graph_to_sync_item(raw)
+    assert "content_key" not in item.fields
