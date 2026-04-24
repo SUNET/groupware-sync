@@ -1099,11 +1099,20 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
 
     # Start + duration
     dtstart_utc = fields.get("dtstart_utc")
-    dtstart_tz = fields.get("dtstart_tz", "Etc/UTC")
+    # CalDAV adapter sets dtstart_tz to "" for UTC events and for
+    # all-day events; `.get(key, default)` doesn't substitute on an
+    # explicit empty string, so normalise via `or`.
+    dtstart_tz = fields.get("dtstart_tz") or "Etc/UTC"
     all_day = bool(fields.get("all_day"))
     if dtstart_utc:
-        local_start = tz.from_utc(dtstart_utc, dtstart_tz)
-        event["start"] = local_start
+        # CalDAV all-day events store dtstart_utc as a date-only
+        # ISO string ("YYYY-MM-DD"). tz.from_utc would crash on that
+        # — and JSCalendar wants a LocalDateTime for all-day anyway,
+        # so emit midnight-of-day directly without tz conversion.
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", dtstart_utc):
+            event["start"] = f"{dtstart_utc}T00:00:00"
+        else:
+            event["start"] = tz.from_utc(dtstart_utc, dtstart_tz)
         # JSCalendar RFC 8984 §4.4.1: when showWithoutTime is true,
         # timeZone MUST NOT be set. Stalwart rejects the create
         # otherwise as invalidProperties.

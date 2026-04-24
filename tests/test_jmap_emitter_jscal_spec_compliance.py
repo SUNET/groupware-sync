@@ -97,3 +97,39 @@ def test_all_day_event_without_explicit_flag_defaults_to_timezone_present():
     body = _sync_item_to_jmap(item)
     assert body.get("timeZone") == "Europe/Stockholm"
     assert "showWithoutTime" not in body
+
+
+# -- CalDAV-shaped inputs must not crash the emitter --------------------------
+
+def test_caldav_all_day_shape_date_only_dtstart_empty_tz():
+    """CalDAV adapter emits all-day events with dtstart_utc='YYYY-MM-DD'
+    and dtstart_tz=''. tz.from_utc would crash on both. The emitter
+    must detect the date-only form and emit a JSCalendar-legal payload:
+    LocalDateTime start at midnight, no timeZone, showWithoutTime=true."""
+    item = _item(
+        uid="ev-allday",
+        summary="Semester",
+        dtstart_utc="2021-09-16",
+        dtstart_tz="",
+        all_day=True,
+    )
+    body = _sync_item_to_jmap(item)
+    assert body.get("start") == "2021-09-16T00:00:00"
+    assert body.get("showWithoutTime") is True
+    assert "timeZone" not in body
+
+
+def test_caldav_timed_utc_with_empty_tz_is_coerced_to_etc_utc():
+    """CalDAV adapter can emit UTC events with dtstart_tz=''. The
+    emitter must coerce '' to 'Etc/UTC' rather than feed '' to
+    ZoneInfo (which raises)."""
+    item = _item(
+        uid="ev-utc",
+        summary="Standup",
+        dtstart_utc="2026-05-01T10:00:00Z",
+        dtstart_tz="",
+        all_day=False,
+    )
+    body = _sync_item_to_jmap(item)
+    assert body.get("timeZone") == "Etc/UTC"
+    assert isinstance(body.get("start"), str) and body["start"]
