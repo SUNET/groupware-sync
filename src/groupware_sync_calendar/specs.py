@@ -40,6 +40,12 @@ CALENDAR_EVENT_SPEC = TypeSpec(
         FieldDef("color", MergeStrategy.SCALAR),
         FieldDef("conference", MergeStrategy.SCALAR),
     ],
-    identity_fields=["uid"],
+    # Tree-level pairing uses "uid". When that fails (e.g. Graph
+    # reassigns iCalUId on create), execute-time _identity_match falls
+    # back to "content_key" — a stable summary+dtstart_utc derivation
+    # populated by each adapter's _*_to_sync_item helper. See
+    # src/groupware_sync_calendar/identity.py and
+    # docs:2026-04-24-calendar-content-fallback-pairing-design.md.
+    identity_fields=["uid", "content_key"],
     timestamp_field="updated",
 )
