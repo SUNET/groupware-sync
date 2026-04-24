@@ -270,12 +270,12 @@ class GraphCalendarAdapter(SyncProvider):
         # row becomes a leaf, letting the rest of the pipeline treat the
         # event as a single logical entity.
         #
-        # $orderby lastModifiedDateTime desc,id asc makes the winner
-        # deterministic across runs: the freshest row wins; stable
-        # tie-break by id if two duplicates share a timestamp. Without
-        # $orderby, Graph's response order can flip between runs and the
-        # "winner" flips with it, which would churn ItemMapping rows in
-        # the state DB.
+        # Order is picked client-side: prefer the row with the greatest
+        # lastModifiedDateTime, tie-break by smallest id. We tried
+        # `$orderby=lastModifiedDateTime desc,id asc` on the URL but
+        # Graph responds with 400 Bad Request — `id` isn't an orderable
+        # property on /me/events, and some Graph tenants reject any
+        # $orderby on this endpoint. Client-side sort is bulletproof.
         for cal in calendars:
             cal_node = SyncNode(
                 node_id=cal["id"],
@@ -286,44 +286,74 @@ class GraphCalendarAdapter(SyncProvider):
             events_url: Optional[str] = (
                 f"/me/calendars/{cal['id']}/events"
                 f"?$select=id,lastModifiedDateTime,iCalUId,subject,start"
-                f"&$orderby=lastModifiedDateTime%20desc,id%20asc"
                 f"&$top=100"
             )
-            seen_icaluids: set[str] = set()
-            dup_count = 0
+            all_events: list[dict[str, Any]] = []
             while events_url:
                 r = self._request("GET", events_url)
                 r.raise_for_status()
                 data = r.json()
-                for event in data.get("value", []):
-                    ical = event.get("iCalUId")
-                    if ical and ical in seen_icaluids:
-                        dup_count += 1
-                        continue
-                    if ical:
-                        seen_icaluids.add(ical)
-                    # Graph's iCalUId is server-assigned and read-only —
-                    # values we POST during create are silently replaced.
-                    # That makes uid unreliable as a cross-provider
-                    # identity. Derive a content_key-based identity from
-                    # subject + UTC start so both sides pair on content
-                    # regardless of what Graph did to the uid. Fall back
-                    # to iCalUId when subject or start is missing. See
-                    # src/groupware_sync_calendar/identity.py.
-                    idk = _tree_identity_key(event)
-                    leaf = SyncNode(
-                        node_id=event["id"],
-                        name=event["id"],
-                        node_type=NodeType.LEAF,
-                        fingerprint=event.get("lastModifiedDateTime", ""),
-                        item_type=ItemType.CALENDAR_EVENT,
-                        identity_key=idk,
-                    )
-                    cal_node.children.append(leaf)
+                all_events.extend(data.get("value", []))
                 next_link = data.get("@odata.nextLink")
                 events_url = (
                     next_link if next_link and self._validate_url(next_link) else None
                 )
+
+            # Stable dedupe: freshest (max lastModifiedDateTime) wins;
+            # tie-break by smallest id so the same row wins every run.
+            # Sort descending by (lastModifiedDateTime, -id-as-str) —
+            # easier expressed by sorting ascending on (-lmd, id) then
+            # picking first-seen.
+            all_events.sort(
+                key=lambda ev: (
+                    ev.get("lastModifiedDateTime", ""),
+                    # Invert id order by using the negative of its sort
+                    # position: a larger id sorts after a smaller one
+                    # ascending, so for a DESC outer sort we want the
+                    # smaller id to end up "later" (greater). Python's
+                    # tuple sort doesn't take a per-key direction, so
+                    # just reverse the whole list below.
+                    ev.get("id", ""),
+                ),
+                reverse=True,
+            )
+            # reverse=True gives (lmd desc, id desc) — we wanted id asc
+            # for tie-break. Post-process: for equal lmd, reverse only
+            # the id order among the group by sorting that slice asc.
+            # Simpler: use stable sort twice (Python's sort is stable).
+            all_events.sort(key=lambda ev: ev.get("id", ""))
+            all_events.sort(
+                key=lambda ev: ev.get("lastModifiedDateTime", ""),
+                reverse=True,
+            )
+
+            seen_icaluids: set[str] = set()
+            dup_count = 0
+            for event in all_events:
+                ical = event.get("iCalUId")
+                if ical and ical in seen_icaluids:
+                    dup_count += 1
+                    continue
+                if ical:
+                    seen_icaluids.add(ical)
+                # Graph's iCalUId is server-assigned and read-only —
+                # values we POST during create are silently replaced.
+                # That makes uid unreliable as a cross-provider
+                # identity. Derive a content_key-based identity from
+                # subject + UTC start so both sides pair on content
+                # regardless of what Graph did to the uid. Fall back
+                # to iCalUId when subject or start is missing. See
+                # src/groupware_sync_calendar/identity.py.
+                idk = _tree_identity_key(event)
+                leaf = SyncNode(
+                    node_id=event["id"],
+                    name=event["id"],
+                    node_type=NodeType.LEAF,
+                    fingerprint=event.get("lastModifiedDateTime", ""),
+                    item_type=ItemType.CALENDAR_EVENT,
+                    identity_key=idk,
+                )
+                cal_node.children.append(leaf)
             if dup_count:
                 log.info(
                     "graph calendar %r: %d duplicate-iCalUId event rows skipped",
