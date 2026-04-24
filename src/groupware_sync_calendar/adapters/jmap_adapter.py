@@ -799,19 +799,29 @@ def _text_to_jscal_rrule(text: str) -> dict[str, Any]:
         elif key == "COUNT":
             rule["count"] = int(value)
         elif key == "UNTIL":
-            # Reformat to ISO 8601 if needed
+            # JSCalendar RFC 8984 §1.4.6 defines `until` as a
+            # LocalDateTime — YYYY-MM-DDTHH:MM:SS with no zone suffix.
+            # A bare YYYY-MM-DD (what RFC 5545 calls a "date value" for
+            # UNTIL) is NOT acceptable; Stalwart rejects it as
+            # invalidProperties. Coerce to end-of-day so the recurrence
+            # set stays inclusive of the source's last day.
             v = value.strip()
             if len(v) == 8:
-                # YYYYMMDD -> YYYY-MM-DD
-                rule["until"] = f"{v[:4]}-{v[4:6]}-{v[6:8]}"
+                # YYYYMMDD (RFC 5545 date form) -> YYYY-MM-DDT23:59:59
+                rule["until"] = (
+                    f"{v[:4]}-{v[4:6]}-{v[6:8]}T23:59:59"
+                )
             elif "T" in v and len(v) >= 15:
-                # YYYYMMDDTHHMMSS -> YYYY-MM-DDTHH:MM:SS
+                # YYYYMMDDTHHMMSS[Z] -> YYYY-MM-DDTHH:MM:SS
+                # Drop any trailing Z: JSCalendar LocalDateTime is
+                # zoneless; the recurrence is interpreted in the
+                # event's timeZone.
                 d_part = v[:8]
                 t_part = v[9:15] if len(v) >= 15 else v[9:]
-                formatted = f"{d_part[:4]}-{d_part[4:6]}-{d_part[6:8]}T{t_part[:2]}:{t_part[2:4]}:{t_part[4:6]}"
-                if v.endswith("Z"):
-                    formatted += "Z"
-                rule["until"] = formatted
+                rule["until"] = (
+                    f"{d_part[:4]}-{d_part[4:6]}-{d_part[6:8]}"
+                    f"T{t_part[:2]}:{t_part[2:4]}:{t_part[4:6]}"
+                )
             else:
                 rule["until"] = v
         elif key == "BYDAY":
@@ -1089,11 +1099,25 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
 
     # Start + duration
     dtstart_utc = fields.get("dtstart_utc")
-    dtstart_tz = fields.get("dtstart_tz", "Etc/UTC")
+    # CalDAV adapter sets dtstart_tz to "" for UTC events and for
+    # all-day events; `.get(key, default)` doesn't substitute on an
+    # explicit empty string, so normalise via `or`.
+    dtstart_tz = fields.get("dtstart_tz") or "Etc/UTC"
+    all_day = bool(fields.get("all_day"))
     if dtstart_utc:
-        local_start = tz.from_utc(dtstart_utc, dtstart_tz)
-        event["start"] = local_start
-        event["timeZone"] = dtstart_tz
+        # CalDAV all-day events store dtstart_utc as a date-only
+        # ISO string ("YYYY-MM-DD"). tz.from_utc would crash on that
+        # — and JSCalendar wants a LocalDateTime for all-day anyway,
+        # so emit midnight-of-day directly without tz conversion.
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", dtstart_utc):
+            event["start"] = f"{dtstart_utc}T00:00:00"
+        else:
+            event["start"] = tz.from_utc(dtstart_utc, dtstart_tz)
+        # JSCalendar RFC 8984 §4.4.1: when showWithoutTime is true,
+        # timeZone MUST NOT be set. Stalwart rejects the create
+        # otherwise as invalidProperties.
+        if not all_day:
+            event["timeZone"] = dtstart_tz
 
         # Compute duration from dtend
         dtend_utc = fields.get("dtend_utc")
@@ -1112,7 +1136,7 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
 
     # All-day
     if fields.get("all_day") is not None:
-        event["showWithoutTime"] = bool(fields["all_day"])
+        event["showWithoutTime"] = all_day
 
     # Location
     if fields.get("location") or fields.get("geo"):
