@@ -83,10 +83,10 @@ export SYNC_M365_ADDRESSBOOK=Contacts
 export SYNC_STATE_DATABASE_URL=sqlite:////path/to/sync-state.db
 
 # Dry run (show what would happen):
-groupware-sync-contacts sync-v2 --dry-run --verbose
+groupware-sync-contacts sync --dry-run --verbose
 
 # Real sync:
-groupware-sync-contacts sync-v2 --verbose
+groupware-sync-contacts sync --verbose
 ```
 
 ## Testing

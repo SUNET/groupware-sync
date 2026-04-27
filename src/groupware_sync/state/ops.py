@@ -62,6 +62,20 @@ def get_pair(
     )
 
 
+def get_pair_by_node(
+    s: Session, provider: str, node_id: str,
+) -> Optional[NodePair]:
+    """Look up a NodePair where (provider, node_id) matches either side."""
+    return (
+        s.query(NodePair)
+        .filter(
+            ((NodePair.a_provider == provider) & (NodePair.a_node_id == node_id))
+            | ((NodePair.b_provider == provider) & (NodePair.b_node_id == node_id))
+        )
+        .first()
+    )
+
+
 def update_merkle(s: Session, pair_id: int, merkle_hash: str) -> None:
     """Update the merkle_hash on a NodePair."""
     pair = s.get(NodePair, pair_id)

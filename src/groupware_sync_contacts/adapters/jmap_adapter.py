@@ -9,6 +9,7 @@ Contact model. This adapter works with SyncItem dicts instead.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -26,6 +27,7 @@ from groupware_sync.provider import (
     NotificationPolicy,
     SyncProvider,
 )
+from groupware_sync.retry import parse_retry_after
 
 log = logging.getLogger(__name__)
 
@@ -458,8 +460,6 @@ class JmapContactAdapter(SyncProvider):
 
         Retries on 429 Too Many Requests with exponential backoff.
         """
-        import time as _time
-
         self._ensure_session()
         body = {
             "using": USING,
@@ -469,9 +469,9 @@ class JmapContactAdapter(SyncProvider):
             r = self._client.post(self._api_url, json=body)  # type: ignore[arg-type]
             if r.status_code == 429:
                 default_wait = min(5 * (2 ** attempt), 120)  # 5, 10, 20, 40, 80, 120, 120, 120
-                retry_after = int(r.headers.get("retry-after", default_wait))
+                retry_after = parse_retry_after(r.headers.get("retry-after"), default=default_wait)
                 log.warning("JMAP 429 — retrying in %ds (attempt %d/8)", retry_after, attempt + 1)
-                _time.sleep(retry_after)
+                time.sleep(retry_after)
                 continue
             r.raise_for_status()
             return r.json()["methodResponses"]
