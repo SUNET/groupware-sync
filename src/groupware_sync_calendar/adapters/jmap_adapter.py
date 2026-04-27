@@ -1009,10 +1009,16 @@ def _jmap_to_sync_item(event: dict[str, Any]) -> SyncItem:
         if exdates:
             fields["exdates"] = sorted(exdates)
 
-    # Participants — split into organizer and attendees
+    # Participants — split into organizer and attendees.
+    # Canonical shape (must match graph_adapter):
+    #   organizer: {"email": str, "name": str}
+    #   attendees: [{"email": str, "name": str, "role": str, "partstat": str}, ...]
+    # Extra JSCalendar fields (rsvp, role on organizer, etc.) are
+    # dropped because Graph does not expose them; keeping them here
+    # would make every paired event drift on the merge comparison.
     participants = event.get("participants")
     if participants and isinstance(participants, dict):
-        attendees: list[dict[str, Any]] = []
+        attendees: list[dict[str, str]] = []
         for _pid, p in participants.items():
             roles = p.get("roles", {})
             send_to = p.get("sendTo", {})
@@ -1020,30 +1026,25 @@ def _jmap_to_sync_item(event: dict[str, Any]) -> SyncItem:
             if email.lower().startswith("mailto:"):
                 email = email[7:]
 
-            entry: dict[str, Any] = {}
-            if email:
-                entry["email"] = email
-            if p.get("name"):
-                entry["name"] = p["name"]
-            if p.get("participationStatus"):
-                entry["status"] = p["participationStatus"]
-            if p.get("expectReply") is not None:
-                entry["rsvp"] = bool(p["expectReply"])
-
             if roles.get("owner"):
-                entry["role"] = "organizer"
-                fields["organizer"] = entry
+                fields["organizer"] = {
+                    "email": email or "",
+                    "name": p.get("name") or "",
+                }
+                continue
+
+            if roles.get("chair"):
+                role = "chair"
+            elif roles.get("optional"):
+                role = "optional"
             else:
-                # Determine role
-                if roles.get("attendee"):
-                    entry["role"] = "attendee"
-                elif roles.get("chair"):
-                    entry["role"] = "chair"
-                elif roles.get("optional"):
-                    entry["role"] = "optional"
-                else:
-                    entry["role"] = "attendee"
-                attendees.append(entry)
+                role = "attendee"
+            attendees.append({
+                "email": email or "",
+                "name": p.get("name") or "",
+                "role": role,
+                "partstat": p.get("participationStatus") or "needs-action",
+            })
 
         if attendees:
             fields["attendees"] = attendees
@@ -1246,10 +1247,6 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
                 p["sendTo"] = {"imip": f"mailto:{organizer['email']}"}
             if organizer.get("name"):
                 p["name"] = organizer["name"]
-            if organizer.get("status"):
-                p["participationStatus"] = organizer["status"]
-            if organizer.get("rsvp") is not None:
-                p["expectReply"] = bool(organizer["rsvp"])
             participants[f"p{idx}"] = p
             idx += 1
 
@@ -1267,10 +1264,8 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
                     p["sendTo"] = {"imip": f"mailto:{att['email']}"}
                 if att.get("name"):
                     p["name"] = att["name"]
-                if att.get("status"):
-                    p["participationStatus"] = att["status"]
-                if att.get("rsvp") is not None:
-                    p["expectReply"] = bool(att["rsvp"])
+                if att.get("partstat"):
+                    p["participationStatus"] = att["partstat"]
                 participants[f"p{idx}"] = p
                 idx += 1
 
