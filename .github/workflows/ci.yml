@@ -55,4 +55,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv run --extra dev pip-audit
+      # CVE-2026-3219 affects `pip` itself, which uv's audit environment
+      # bundles transitively. No fixed version is published yet
+      # (pip-audit shows the Fix Versions column empty), and pip is not
+      # used at runtime by this project. Re-enable scanning of pip once
+      # an upstream fix lands; revisit this ignore on each CVE refresh.
+      - run: uv run --extra dev pip-audit --ignore-vuln CVE-2026-3219
