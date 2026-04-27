@@ -92,7 +92,7 @@ def merge_item(
     item_b: SyncItem,
     snapshot: Optional[SyncItem],
     type_spec: TypeSpec,
-) -> tuple[SyncItem, bool, bool, int]:
+) -> tuple[SyncItem, bool, bool, int, dict[str, list[str]]]:
     """Merge two versions of an item using field-level strategies.
 
     Args:
@@ -102,15 +102,17 @@ def merge_item(
         type_spec: Field definitions with merge strategies.
 
     Returns:
-        (merged_item, changed_vs_a, changed_vs_b, conflict_count)
+        (merged_item, changed_vs_a, changed_vs_b, conflict_count, drift)
         - changed_vs_a: True if merged result differs from item_a
         - changed_vs_b: True if merged result differs from item_b
         - conflict_count: number of fields that required last-write-wins arbitration
+        - drift: {"a": [field names that diverge from item_a],
+                  "b": [field names that diverge from item_b]}
     """
     merged_fields: dict[str, Any] = {}
     conflict_count = 0
-    changed_vs_a = False
-    changed_vs_b = False
+    drift_a: list[str] = []
+    drift_b: list[str] = []
 
     no_snapshot = snapshot is None
 
@@ -129,9 +131,9 @@ def merge_item(
             merged_val = val_a if val_a is not None else val_b
             merged_fields[fname] = merged_val
             if merged_val != val_a:
-                changed_vs_a = True
+                drift_a.append(fname)
             if merged_val != val_b:
-                changed_vs_b = True
+                drift_b.append(fname)
             continue
 
         if strategy == MergeStrategy.SET:
@@ -147,9 +149,9 @@ def merge_item(
             )
             merged_fields[fname] = result
             if chg_vs_a:
-                changed_vs_a = True
+                drift_a.append(fname)
             if chg_vs_b:
-                changed_vs_b = True
+                drift_b.append(fname)
             continue
 
         # SCALAR strategy
@@ -175,9 +177,9 @@ def merge_item(
 
         merged_fields[fname] = merged_val
         if merged_val != val_a:
-            changed_vs_a = True
+            drift_a.append(fname)
         if merged_val != val_b:
-            changed_vs_b = True
+            drift_b.append(fname)
 
     merged_updated_at = _max_timestamp(item_a.updated_at, item_b.updated_at)
     merged = SyncItem(
@@ -187,4 +189,10 @@ def merge_item(
         updated_at=merged_updated_at,
     )
 
-    return merged, changed_vs_a, changed_vs_b, conflict_count
+    return (
+        merged,
+        bool(drift_a),
+        bool(drift_b),
+        conflict_count,
+        {"a": drift_a, "b": drift_b},
+    )

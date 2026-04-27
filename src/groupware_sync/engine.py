@@ -546,7 +546,7 @@ def _merge_one(
         snapshot = ops.load_snapshot_item(snap_row)
 
     # Three-way merge
-    merged, changed_vs_a, changed_vs_b, conflict_count = merge_item(
+    merged, changed_vs_a, changed_vs_b, conflict_count, drift = merge_item(
         item_a, item_b, snapshot, type_spec
     )
     summary.conflicts += conflict_count
@@ -559,7 +559,10 @@ def _merge_one(
         merged_for_a = dataclasses.replace(merged, provider_id=a_id)
         try:
             new_fp_a = provider_a.update_item(cid_a, merged_for_a)
-            log.debug("Updated item %s on %s (fp=%s)", a_id, provider_a.name, new_fp_a)
+            log.info(
+                "Updated %s on %s — drift fields: %s",
+                a_id, provider_a.name, ", ".join(drift["a"]) or "(none)",
+            )
         except Exception:
             log.exception("Failed to update %s on %s", a_id, provider_a.name)
             summary.errors += 1
@@ -568,7 +571,10 @@ def _merge_one(
         merged_for_b = dataclasses.replace(merged, provider_id=b_id)
         try:
             new_fp_b = provider_b.update_item(cid_b, merged_for_b)
-            log.debug("Updated item %s on %s (fp=%s)", b_id, provider_b.name, new_fp_b)
+            log.info(
+                "Updated %s on %s — drift fields: %s",
+                b_id, provider_b.name, ", ".join(drift["b"]) or "(none)",
+            )
         except Exception:
             log.exception("Failed to update %s on %s", b_id, provider_b.name)
             summary.errors += 1
@@ -693,7 +699,7 @@ def _execute_creates(
         op_b = b_items[b_id][1]
 
         # Three-way merge with no snapshot (first sync)
-        merged, changed_vs_a, changed_vs_b, conflict_count = merge_item(
+        merged, changed_vs_a, changed_vs_b, conflict_count, drift = merge_item(
             item_a, item_b, None, type_spec
         )
         summary.conflicts += conflict_count
@@ -706,6 +712,10 @@ def _execute_creates(
             merged_for_a = dataclasses.replace(merged, provider_id=a_id)
             try:
                 new_fp_a = provider_a.update_item(op_a.container_id_a, merged_for_a)
+                log.info(
+                    "First-sync update %s on %s — drift fields: %s",
+                    a_id, provider_a.name, ", ".join(drift["a"]) or "(none)",
+                )
             except Exception:
                 log.exception("Failed to update matched %s on %s", a_id, provider_a.name)
                 summary.errors += 1
@@ -714,6 +724,10 @@ def _execute_creates(
             merged_for_b = dataclasses.replace(merged, provider_id=b_id)
             try:
                 new_fp_b = provider_b.update_item(op_b.container_id_b, merged_for_b)
+                log.info(
+                    "First-sync update %s on %s — drift fields: %s",
+                    b_id, provider_b.name, ", ".join(drift["b"]) or "(none)",
+                )
             except Exception:
                 log.exception("Failed to update matched %s on %s", b_id, provider_b.name)
                 summary.errors += 1
