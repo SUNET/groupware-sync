@@ -133,8 +133,25 @@ def test_get_pair_by_node_matches_either_side(session):
     pair = ops.get_or_create_pair(
         session, "contact", "stalwart", "book-A", "m365", "folder-B", "Contacts"
     )
-    assert ops.get_pair_by_node(session, "stalwart", "book-A").id == pair.id
-    assert ops.get_pair_by_node(session, "m365", "folder-B").id == pair.id
-    assert ops.get_pair_by_node(session, "stalwart", "missing") is None
+    assert ops.get_pair_by_node(session, "stalwart", "book-A", "m365").id == pair.id
+    assert ops.get_pair_by_node(session, "m365", "folder-B", "stalwart").id == pair.id
+    assert ops.get_pair_by_node(session, "stalwart", "missing", "m365") is None
     # Provider must match the side: stalwart never sits on the b side here.
-    assert ops.get_pair_by_node(session, "stalwart", "folder-B") is None
+    assert ops.get_pair_by_node(session, "stalwart", "folder-B", "m365") is None
+
+
+def test_get_pair_by_node_distinguishes_counterparts(session):
+    """Same container paired against two different counterparts must yield
+    the row matching the requested counterpart, not an arbitrary one."""
+    pair_m365 = ops.get_or_create_pair(
+        session, "contact", "stalwart", "book-A", "m365", "folder-B", "Contacts",
+    )
+    pair_caldav = ops.get_or_create_pair(
+        session, "contact", "stalwart", "book-A", "caldav", "remote-B", "Contacts",
+    )
+    found_m365 = ops.get_pair_by_node(session, "stalwart", "book-A", "m365")
+    found_caldav = ops.get_pair_by_node(session, "stalwart", "book-A", "caldav")
+    assert found_m365 is not None and found_m365.id == pair_m365.id
+    assert found_caldav is not None and found_caldav.id == pair_caldav.id
+    # Asking for an unknown counterpart returns None even though node_id matches.
+    assert ops.get_pair_by_node(session, "stalwart", "book-A", "ghost") is None

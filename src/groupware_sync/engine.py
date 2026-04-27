@@ -1018,7 +1018,9 @@ def _save_tree_cursors(
         return
     for child in tree.children:
         if child.node_type == NodeType.CONTAINER and child.state_cursor:
-            pair = ops.get_pair_by_node(session, this_provider, child.node_id)
+            pair = ops.get_pair_by_node(
+                session, this_provider, child.node_id, other_provider,
+            )
             if pair is not None:
                 ops.save_cursor(session, pair.id, this_provider, child.state_cursor)
         _save_tree_cursors(child, this_provider, other_provider, session)
