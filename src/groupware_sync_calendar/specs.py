@@ -4,8 +4,13 @@ from groupware_sync.models import FieldDef, ItemType, MergeStrategy, TypeSpec
 CALENDAR_EVENT_SPEC = TypeSpec(
     item_type=ItemType.CALENDAR_EVENT,
     fields=[
-        # Identity
-        FieldDef("uid", MergeStrategy.IMMUTABLE),
+        # Identity. Ignored by the merge: Graph reassigns iCalUId on
+        # POST/PATCH (it's read-only) so we cannot roundtrip uid through
+        # Graph, and tree-level pairing already uses content_key as the
+        # primary identity. Treating uid as IMMUTABLE caused the engine
+        # to PATCH Graph with the Stalwart UID on every run, then read
+        # back Graph's reassigned UID, then drift on the next run.
+        FieldDef("uid", MergeStrategy.IGNORE),
         # Timing
         FieldDef("summary", MergeStrategy.SCALAR),
         FieldDef("description", MergeStrategy.SCALAR),
@@ -29,15 +34,16 @@ CALENDAR_EVENT_SPEC = TypeSpec(
         FieldDef("privacy", MergeStrategy.SCALAR),
         FieldDef("free_busy", MergeStrategy.SCALAR),
         FieldDef("categories", MergeStrategy.SET),
-        # sequence and updated are server-bumped on every PATCH (Graph
-        # bumps lastModifiedDateTime, JMAP bumps updated). They diverge
-        # between sides immediately after either side accepts a write,
-        # so treating them as user content makes every subsequent run
-        # report a conflict on every paired event. IGNORE keeps the
-        # raw fields out of the merge while updated_at on SyncItem
-        # still drives last-write-wins arbitration.
+        # sequence/updated/created are server-set timestamps. Each
+        # side maintains its own copy and refuses to overwrite (Graph's
+        # createdDateTime and lastModifiedDateTime are read-only;
+        # Stalwart sets its own at create-time and bumps `updated` on
+        # PATCH). Comparing them as user content guarantees drift on
+        # every run. IGNORE keeps them out of the merge entirely.
+        # SyncItem.updated_at (separate from the field copy) still
+        # drives last-write-wins arbitration.
         FieldDef("sequence", MergeStrategy.IGNORE),
-        FieldDef("created", MergeStrategy.IMMUTABLE),
+        FieldDef("created", MergeStrategy.IGNORE),
         FieldDef("updated", MergeStrategy.IGNORE),
         # Reminders
         FieldDef("reminder_minutes", MergeStrategy.SCALAR),
