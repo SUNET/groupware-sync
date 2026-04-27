@@ -1272,7 +1272,9 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
         if participants:
             event["participants"] = participants
 
-    # Alerts (reminder)
+    # Alerts (reminder). Always set the field — null clears any orphan alerts
+    # left behind by other tools (e.g. malformed VALARM imports), since JMAP
+    # update is patch-based and would otherwise leave them untouched.
     reminder = fields.get("reminder_minutes")
     if reminder is not None:
         offset = _format_iso_duration(timedelta(minutes=-int(reminder)))
@@ -1286,6 +1288,8 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
                 "action": "display",
             },
         }
+    else:
+        event["alerts"] = None
 
     # URL -> links
     if fields.get("url"):
