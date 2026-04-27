@@ -1209,9 +1209,15 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
     # `recurrenceRules` (plural, array). Stalwart rejects that name
     # with `invalidProperties [recurrenceRules]` and only accepts the
     # singular `recurrenceRule` as a scalar object. Emit the singular
-    # form so the create/update succeeds against Stalwart; other JMAP
-    # servers that follow the spec will simply ignore it, and we also
-    # read both names on the way back (see _jmap_to_sync_item).
+    # form so create/update succeeds against Stalwart. This is a
+    # Stalwart-specific interoperability tradeoff: another JMAP
+    # server that follows the spec strictly may either reject the
+    # non-standard property (failing the write) or silently ignore
+    # it (silently dropping recurrence so the event appears as a
+    # single instance). If we ever need to support a non-Stalwart
+    # JMAP server, this will need to be gated behind server detection
+    # or retry-on-invalidProperties. We read both names on the way
+    # back (see _jmap_to_sync_item).
     rrule_text = fields.get("rrule")
     if rrule_text:
         rule = _text_to_jscal_rrule(rrule_text)
