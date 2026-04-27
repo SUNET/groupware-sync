@@ -214,19 +214,88 @@ def _compare_node(
     cached = ops.get_mappings_by_identity(session, pair.id)
     had_cache = bool(cached)
 
+    # Resolve cached mappings against the unpairable buckets via
+    # provider_id BEFORE the main loop. When two leaves share an
+    # identity_key (collision), `_bucket` demotes both to unpairable
+    # to avoid silently picking the wrong pair. Subsequent runs would
+    # then plan CREATE_ITEMs for them, `_execute_creates` would
+    # re-pair via _identity_match and store an ItemMapping under
+    # `_legacy_identity_key(a_id, b_id)`, and the next run wouldn't
+    # find that legacy key — so it would clean it up as `(both gone)`
+    # and re-create the pair forever. The cycle is observable as a
+    # dry-run that always plans the same N creates and N deletes
+    # despite the data being stable.
+    #
+    # Break the cycle by trusting cached pairs over identity-based
+    # pairing here: if the mapping's `a_item_id` and `b_item_id` both
+    # appear in the unpairable buckets, treat them as paired. Emit
+    # MERGE_ITEM only when fingerprints drifted, otherwise emit
+    # nothing at all and remove both leaves from the unpairable
+    # buckets so they don't get re-CREATEd below.
+    unpairable_a_by_id: dict[str, SyncNode] = {
+        leaf.node_id: leaf for leaf in unpairable_a
+    }
+    unpairable_b_by_id: dict[str, SyncNode] = {
+        leaf.node_id: leaf for leaf in unpairable_b
+    }
+    resolved_via_cache: set[str] = set()
+    resolved_a_ids: set[str] = set()
+    resolved_b_ids: set[str] = set()
+    for key, mapping in cached.items():
+        leaf_a_alt = unpairable_a_by_id.get(mapping.a_item_id)
+        leaf_b_alt = unpairable_b_by_id.get(mapping.b_item_id)
+        if leaf_a_alt is None or leaf_b_alt is None:
+            continue
+        fp_changed_a = (
+            mapping.fingerprint_a is not None
+            and leaf_a_alt.fingerprint != mapping.fingerprint_a
+        )
+        fp_changed_b = (
+            mapping.fingerprint_b is not None
+            and leaf_b_alt.fingerprint != mapping.fingerprint_b
+        )
+        if fp_changed_a or fp_changed_b:
+            leaf_ops.append(
+                SyncOp(
+                    op_type=OpType.MERGE_ITEM,
+                    target_side="both",
+                    node_id=leaf_a_alt.node_id,
+                    paired_node_id=leaf_b_alt.node_id,
+                    container_id_a=node_a.node_id,
+                    container_id_b=node_b.node_id,
+                    item_type=item_type,
+                    identity_key=key,
+                )
+            )
+        resolved_via_cache.add(key)
+        resolved_a_ids.add(leaf_a_alt.node_id)
+        resolved_b_ids.add(leaf_b_alt.node_id)
+    if resolved_via_cache:
+        unpairable_a = [
+            leaf for leaf in unpairable_a
+            if leaf.node_id not in resolved_a_ids
+        ]
+        unpairable_b = [
+            leaf for leaf in unpairable_b
+            if leaf.node_id not in resolved_b_ids
+        ]
+
     if leaves_a or leaves_b:
         paired_keys = set(by_identity_a) & set(by_identity_b)
         log.info(
             "pair %r: a=%d (keyed=%d, unpairable=%d), "
-            "b=%d (keyed=%d, unpairable=%d), paired_by_identity=%d, cache=%d",
+            "b=%d (keyed=%d, unpairable=%d), paired_by_identity=%d, "
+            "cache=%d, resolved_via_cache=%d",
             node_a.name,
             len(leaves_a), len(by_identity_a), len(unpairable_a),
             len(leaves_b), len(by_identity_b), len(unpairable_b),
-            len(paired_keys), len(cached),
+            len(paired_keys), len(cached), len(resolved_via_cache),
         )
 
     all_keys = set(by_identity_a) | set(by_identity_b) | set(cached)
     for key in sorted(all_keys):
+        if key in resolved_via_cache:
+            continue
         leaf_a = by_identity_a.get(key)
         leaf_b = by_identity_b.get(key)
         mapping = cached.get(key)
