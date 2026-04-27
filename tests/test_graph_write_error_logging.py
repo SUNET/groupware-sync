@@ -153,3 +153,19 @@ def test_create_item_emits_debug_log_with_redacted_payload(caplog):
     assert "<redacted>" in msg
     # Structural keys still present so the operator can diagnose.
     assert "start" in msg or "timeZone" in msg
+
+
+def test_update_item_emits_debug_log_with_redacted_payload(caplog):
+    err_body = {"error": {"code": "Bad", "message": "Bad."}}
+    adapter = _adapter_with_response(_resp(400, err_body))
+    caplog.set_level(logging.DEBUG, logger="groupware_sync_calendar.adapters.graph_adapter")
+    with pytest.raises(ValueError):
+        adapter.update_item("cal-1", _item())
+    debug = [r for r in caplog.records
+             if r.levelno == logging.DEBUG and "request payload" in r.getMessage()]
+    assert len(debug) == 1
+    msg = debug[0].getMessage()
+    assert "Lunch with Alice" not in msg
+    assert "Private notes" not in msg
+    assert "<redacted>" in msg
+    assert "start" in msg or "timeZone" in msg
