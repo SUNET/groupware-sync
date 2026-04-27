@@ -109,6 +109,8 @@ def merge_item(
     """
     merged_fields: dict[str, Any] = {}
     conflict_count = 0
+    changed_vs_a = False
+    changed_vs_b = False
 
     no_snapshot = snapshot is None
 
@@ -124,20 +126,30 @@ def merge_item(
         val_prev = snapshot.fields.get(fname) if snapshot is not None else None
 
         if strategy == MergeStrategy.IMMUTABLE:
-            merged_fields[fname] = val_a if val_a is not None else val_b
+            merged_val = val_a if val_a is not None else val_b
+            merged_fields[fname] = merged_val
+            if merged_val != val_a:
+                changed_vs_a = True
+            if merged_val != val_b:
+                changed_vs_b = True
             continue
 
         if strategy == MergeStrategy.SET:
             if no_snapshot:
-                # Treat as both changed: union everything
                 a_changed = True
                 b_changed = True
             else:
                 a_changed = val_a != val_prev
                 b_changed = val_b != val_prev
 
-            result, _chg_vs_a, _chg_vs_b = _merge_set(val_a, val_b, val_prev, a_changed, b_changed)
+            result, chg_vs_a, chg_vs_b = _merge_set(
+                val_a, val_b, val_prev, a_changed, b_changed,
+            )
             merged_fields[fname] = result
+            if chg_vs_a:
+                changed_vs_a = True
+            if chg_vs_b:
+                changed_vs_b = True
             continue
 
         # SCALAR strategy
@@ -149,24 +161,23 @@ def merge_item(
             b_changed = val_b != val_prev
 
         if not a_changed and not b_changed:
-            # Neither changed: keep snapshot value (same as both)
-            merged_fields[fname] = val_prev
+            merged_val = val_prev
         elif a_changed and not b_changed:
-            # Only A changed: take A
-            merged_fields[fname] = val_a
+            merged_val = val_a
         elif b_changed and not a_changed:
-            # Only B changed: take B
-            merged_fields[fname] = val_b
+            merged_val = val_b
+        elif val_a == val_b:
+            merged_val = val_a
         else:
-            # Both changed
-            if val_a == val_b:
-                # Same value: no conflict
-                merged_fields[fname] = val_a
-            else:
-                # True conflict: last-write-wins
-                conflict_count += 1
-                winner = _pick_winner(item_a, item_b)
-                merged_fields[fname] = val_a if winner == "a" else val_b
+            conflict_count += 1
+            winner = _pick_winner(item_a, item_b)
+            merged_val = val_a if winner == "a" else val_b
+
+        merged_fields[fname] = merged_val
+        if merged_val != val_a:
+            changed_vs_a = True
+        if merged_val != val_b:
+            changed_vs_b = True
 
     merged_updated_at = _max_timestamp(item_a.updated_at, item_b.updated_at)
     merged = SyncItem(
@@ -175,15 +186,5 @@ def merge_item(
         fields=merged_fields,
         updated_at=merged_updated_at,
     )
-
-    # Final check: compare merged fields to each side's full fields
-    # (only for fields we actually processed)
-    processed_names = {f.name for f in type_spec.fields if f.merge_strategy != MergeStrategy.IGNORE}
-    merged_subset_a = {k: item_a.fields.get(k) for k in processed_names}
-    merged_subset_b = {k: item_b.fields.get(k) for k in processed_names}
-    merged_subset = {k: merged_fields.get(k) for k in processed_names if k in merged_fields}
-
-    changed_vs_a = merged_subset != merged_subset_a
-    changed_vs_b = merged_subset != merged_subset_b
 
     return merged, changed_vs_a, changed_vs_b, conflict_count
