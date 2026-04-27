@@ -135,6 +135,33 @@ def test_rrule_to_graph_with_until():
     assert result["range"]["endDate"] == "2026-12-31"
 
 
+def test_rrule_to_graph_includes_start_date_when_provided():
+    """range.startDate is required by Graph on PATCH; the helper must
+    populate it when callers pass start_date."""
+    result = rrule_to_graph_recurrence(
+        "FREQ=WEEKLY;BYDAY=MO", start_date="2026-04-16",
+    )
+    assert result["range"]["startDate"] == "2026-04-16"
+
+
+def test_rrule_to_graph_omits_start_date_when_not_provided():
+    """Backwards compatible: callers that don't pass start_date still
+    get a working object (modulo Graph's PATCH requirement). Avoid
+    fabricating a sentinel; just leave the field absent."""
+    result = rrule_to_graph_recurrence("FREQ=WEEKLY;BYDAY=MO")
+    assert "startDate" not in result["range"]
+
+
+def test_rrule_to_graph_start_date_combines_with_until():
+    result = rrule_to_graph_recurrence(
+        "FREQ=DAILY;INTERVAL=1;UNTIL=20261231",
+        start_date="2026-04-16",
+    )
+    assert result["range"]["type"] == "endDate"
+    assert result["range"]["endDate"] == "2026-12-31"
+    assert result["range"]["startDate"] == "2026-04-16"
+
+
 def test_roundtrip_weekly():
     original = "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;COUNT=20"
     graph = rrule_to_graph_recurrence(original)
