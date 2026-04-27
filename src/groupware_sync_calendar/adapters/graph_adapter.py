@@ -111,7 +111,9 @@ def _redact_graph_payload(body: dict[str, Any]) -> dict[str, Any]:
     only leak meeting content into operator logs without helping the
     diagnosis. Redact those.
 
-    Redacted keys (when present, regardless of nesting depth):
+    Redacted at the documented Graph event paths only — no recursive
+    descent. The Graph event schema is fixed, so explicit paths cover
+    every place free text appears in our writes:
       * top-level ``subject``
       * ``body.content``
       * ``location.displayName`` (singular) and any ``locations[*].displayName``
@@ -158,7 +160,9 @@ def _format_graph_error(prefix: str, response: httpx.Response) -> str:
     when the body isn't JSON or doesn't carry the expected shape."""
     try:
         payload = response.json()
-    except (ValueError, json.JSONDecodeError):
+    except ValueError:
+        # json.JSONDecodeError is a ValueError subclass; one except
+        # covers both invalid-JSON and unexpected-shape parse paths.
         return f"{prefix}: HTTP {response.status_code} (non-JSON body)"
     err = payload.get("error") if isinstance(payload, dict) else None
     if not isinstance(err, dict):
