@@ -784,7 +784,16 @@ def _sync_item_to_graph(item: SyncItem) -> dict[str, Any]:
     # Recurrence
     if fields.get("rrule") is not None:
         try:
-            body["recurrence"] = rrule_to_graph_recurrence(fields["rrule"])
+            # Graph requires range.startDate on every recurrence object;
+            # without it, PATCH fails with `ErrorInvalidOperation: The
+            # recurrence start date is too early.` (CREATE accepts a
+            # missing startDate but Graph rejects on update). Pass the
+            # YYYY-MM-DD prefix of the event's dtstart_utc.
+            dtstart_utc = fields.get("dtstart_utc") or ""
+            start_date = dtstart_utc[:10] if len(dtstart_utc) >= 10 else None
+            body["recurrence"] = rrule_to_graph_recurrence(
+                fields["rrule"], start_date=start_date,
+            )
         except (ValueError, KeyError) as e:
             log.warning("failed to convert rrule to graph recurrence: %s", e)
 

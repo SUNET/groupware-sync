@@ -107,11 +107,21 @@ def graph_recurrence_to_rrule(recurrence: dict[str, Any]) -> str:
     return ";".join(parts)
 
 
-def rrule_to_graph_recurrence(rrule: str) -> dict[str, Any]:
+def rrule_to_graph_recurrence(
+    rrule: str, start_date: str | None = None
+) -> dict[str, Any]:
     """Convert an RFC 5545 RRULE string to a Microsoft Graph recurrence object.
 
     Args:
         rrule: RRULE string, e.g. ``FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,WE,FR``.
+        start_date: Anchor date for ``range.startDate`` in YYYY-MM-DD form.
+            Microsoft Graph requires ``range.startDate`` on every recurrence
+            object — it's optional in the JSON shape but the API rejects
+            PATCH requests without it (returning ``ErrorInvalidOperation:
+            The recurrence start date is too early`` because Graph falls
+            back to an epoch-class sentinel). Callers MUST pass the
+            event's start date (the YYYY-MM-DD prefix of dtstart_utc) so
+            the resulting object survives both POST and PATCH.
 
     Returns:
         Graph recurrence dict with ``pattern`` and ``range`` keys.
@@ -173,6 +183,8 @@ def rrule_to_graph_recurrence(rrule: str) -> dict[str, Any]:
         rng["numberOfOccurrences"] = int(params["COUNT"])
     else:
         rng["type"] = "noEnd"
+    if start_date:
+        rng["startDate"] = start_date
 
     return {"pattern": pattern, "range": rng}
 
