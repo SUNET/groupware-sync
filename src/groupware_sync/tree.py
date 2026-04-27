@@ -247,12 +247,12 @@ def _compare_node(
         if leaf_a_alt is None or leaf_b_alt is None:
             continue
         fp_changed_a = (
-            mapping.fingerprint_a is not None
-            and leaf_a_alt.fingerprint != mapping.fingerprint_a
+            mapping.fingerprint_a is None
+            or leaf_a_alt.fingerprint != mapping.fingerprint_a
         )
         fp_changed_b = (
-            mapping.fingerprint_b is not None
-            and leaf_b_alt.fingerprint != mapping.fingerprint_b
+            mapping.fingerprint_b is None
+            or leaf_b_alt.fingerprint != mapping.fingerprint_b
         )
         if fp_changed_a or fp_changed_b:
             leaf_ops.append(

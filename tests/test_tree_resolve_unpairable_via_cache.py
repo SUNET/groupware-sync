@@ -13,10 +13,9 @@ Without the fix, a stable pair of collisions plans:
 on every sync, forever — even though the data is stable."""
 from __future__ import annotations
 
-import os
-
 import pytest
 
+from groupware_sync.engine import _legacy_identity_key
 from groupware_sync.models import ItemType, NodeType, OpType, SyncNode
 from groupware_sync.state import ops as state_ops
 from groupware_sync.state.db import make_session_factory
@@ -24,14 +23,11 @@ from groupware_sync.tree import compare_trees
 
 
 @pytest.fixture
-def session():
-    db_path = "test_tree_cache_resolve.db"
-    sf = make_session_factory(f"sqlite:///{db_path}")
+def session(tmp_path):
+    sf = make_session_factory(f"sqlite:///{tmp_path / 'test.db'}")
     s = sf()
     yield s
     s.close()
-    if os.path.exists(db_path):
-        os.remove(db_path)
 
 
 def _tree_with_collision_pair(
@@ -72,13 +68,13 @@ def test_collision_pairs_with_cached_mapping_emit_no_ops(session):
     state_ops.create_mapping(
         session, pair.id,
         a_item_id="a1", b_item_id="b1",
-        identity_key="legacy|a1|b1",
+        identity_key=_legacy_identity_key("a1", "b1"),
         fingerprint_a="fp1", fingerprint_b="fp1",
     )
     state_ops.create_mapping(
         session, pair.id,
         a_item_id="a2", b_item_id="b2",
-        identity_key="legacy|a2|b2",
+        identity_key=_legacy_identity_key("a2", "b2"),
         fingerprint_a="fp2", fingerprint_b="fp2",
     )
     session.commit()
@@ -110,7 +106,7 @@ def test_collision_pair_with_drifted_fingerprint_emits_merge(session):
     state_ops.create_mapping(
         session, pair.id,
         a_item_id="a1", b_item_id="b1",
-        identity_key="legacy|a1|b1",
+        identity_key=_legacy_identity_key("a1", "b1"),
         fingerprint_a="fp1-old", fingerprint_b="fp1-old",
     )
     session.commit()
@@ -145,7 +141,7 @@ def test_cached_mapping_with_one_side_gone_still_cleaned_up(session):
     state_ops.create_mapping(
         session, pair.id,
         a_item_id="a1", b_item_id="b1",
-        identity_key="legacy|a1|b1",
+        identity_key=_legacy_identity_key("a1", "b1"),
         fingerprint_a="fp1", fingerprint_b="fp1",
     )
     session.commit()
@@ -160,10 +156,10 @@ def test_cached_mapping_with_one_side_gone_still_cleaned_up(session):
         a, b, "prov_a", "prov_b", ItemType.CONTACT, session,
     )
     # a1 has identity_key="ik:lone" (in by_identity_a), not in any
-    # cached mapping (the cached one is "legacy|a1|b1"). So a1 takes
-    # the standard "leaf_a exists, leaf_b None, no mapping" path →
-    # CREATE_ITEM on B. The cached mapping (no leaves at "legacy|a1|b1")
-    # gets cleaned up as `(both gone)`.
+    # cached mapping (the cached one is _legacy_identity_key("a1","b1")).
+    # So a1 takes the standard "leaf_a exists, leaf_b None, no mapping"
+    # path → CREATE_ITEM on B. The cached mapping (no leaves at the
+    # legacy key) gets cleaned up as `(both gone)`.
     create_b = [op for op in ops_list
                 if op.op_type == OpType.CREATE_ITEM and op.target_side == "b"]
     delete_both = [op for op in ops_list
