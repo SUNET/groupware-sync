@@ -63,14 +63,32 @@ def get_pair(
 
 
 def get_pair_by_node(
-    s: Session, provider: str, node_id: str,
+    s: Session,
+    provider: str,
+    node_id: str,
+    other_provider: str,
 ) -> Optional[NodePair]:
-    """Look up a NodePair where (provider, node_id) matches either side."""
+    """Look up a NodePair where (provider, node_id) is one side and the
+    opposite side is paired against ``other_provider``.
+
+    Constraining by ``other_provider`` matters because the same container
+    can legitimately participate in multiple pairs (e.g., a Stalwart
+    calendar synced against both M365 and a CalDAV server using the same
+    state DB). Without it the lookup would pick an arbitrary row.
+    """
     return (
         s.query(NodePair)
         .filter(
-            ((NodePair.a_provider == provider) & (NodePair.a_node_id == node_id))
-            | ((NodePair.b_provider == provider) & (NodePair.b_node_id == node_id))
+            (
+                (NodePair.a_provider == provider)
+                & (NodePair.a_node_id == node_id)
+                & (NodePair.b_provider == other_provider)
+            )
+            | (
+                (NodePair.b_provider == provider)
+                & (NodePair.b_node_id == node_id)
+                & (NodePair.a_provider == other_provider)
+            )
         )
         .first()
     )
