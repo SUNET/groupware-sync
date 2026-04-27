@@ -554,6 +554,8 @@ def _merge_one(
     # Push updates to sides that changed, capturing server-assigned fingerprints
     new_fp_a = item_a.fingerprint  # default: keep the fetched fingerprint
     new_fp_b = item_b.fingerprint
+    write_a_ok = True
+    write_b_ok = True
 
     if changed_vs_a and cid_a:
         merged_for_a = dataclasses.replace(merged, provider_id=a_id)
@@ -566,6 +568,7 @@ def _merge_one(
         except Exception:
             log.exception("Failed to update %s on %s", a_id, provider_a.name)
             summary.errors += 1
+            write_a_ok = False
 
     if changed_vs_b and cid_b:
         merged_for_b = dataclasses.replace(merged, provider_id=b_id)
@@ -578,18 +581,22 @@ def _merge_one(
         except Exception:
             log.exception("Failed to update %s on %s", b_id, provider_b.name)
             summary.errors += 1
+            write_b_ok = False
 
-    # Store server-assigned fingerprints (not the pre-write ones)
-    ops.update_fingerprints(
-        session,
-        mapping,
-        fingerprint_a=new_fp_a,
-        fingerprint_b=new_fp_b,
-    )
-    ops.save_snapshot(session, mapping.id, merged)
+    # Only persist the merged state when both sides match it. Updating
+    # fingerprints or the snapshot after a failed write would mask drift
+    # from the next sync run, silently dropping the retry.
+    if write_a_ok and write_b_ok:
+        ops.update_fingerprints(
+            session,
+            mapping,
+            fingerprint_a=new_fp_a,
+            fingerprint_b=new_fp_b,
+        )
+        ops.save_snapshot(session, mapping.id, merged)
 
-    if changed_vs_a or changed_vs_b:
-        summary.updated += 1
+        if changed_vs_a or changed_vs_b:
+            summary.updated += 1
 
 
 # ---------------------------------------------------------------------------
@@ -1011,15 +1018,7 @@ def _save_tree_cursors(
         return
     for child in tree.children:
         if child.node_type == NodeType.CONTAINER and child.state_cursor:
-            # Find the pair for this container
-            pair = ops.get_pair(
-                session, this_provider, child.node_id, other_provider, "",
-            )
-            if pair is None:
-                # Try reverse
-                pair = ops.get_pair(
-                    session, other_provider, "", this_provider, child.node_id,
-                )
+            pair = ops.get_pair_by_node(session, this_provider, child.node_id)
             if pair is not None:
                 ops.save_cursor(session, pair.id, this_provider, child.state_cursor)
         _save_tree_cursors(child, this_provider, other_provider, session)

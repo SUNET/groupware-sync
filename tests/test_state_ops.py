@@ -127,3 +127,14 @@ def test_update_fingerprints(session):
     ops.update_fingerprints(session, m, fingerprint_a="new_a", fingerprint_b="new_b")
     assert m.fingerprint_a == "new_a"
     assert m.fingerprint_b == "new_b"
+
+
+def test_get_pair_by_node_matches_either_side(session):
+    pair = ops.get_or_create_pair(
+        session, "contact", "stalwart", "book-A", "m365", "folder-B", "Contacts"
+    )
+    assert ops.get_pair_by_node(session, "stalwart", "book-A").id == pair.id
+    assert ops.get_pair_by_node(session, "m365", "folder-B").id == pair.id
+    assert ops.get_pair_by_node(session, "stalwart", "missing") is None
+    # Provider must match the side: stalwart never sits on the b side here.
+    assert ops.get_pair_by_node(session, "stalwart", "folder-B") is None

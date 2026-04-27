@@ -28,6 +28,7 @@ from groupware_sync.provider import (
     NotificationPolicy,
     SyncProvider,
 )
+from groupware_sync.retry import parse_retry_after
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class GraphContactAdapter(SyncProvider):
             resp = self._client.request(method, url, **kwargs)
             if resp.status_code != 429 or attempt == MAX_429_RETRIES:
                 return resp
-            retry_after = int(resp.headers.get("Retry-After", "5"))
+            retry_after = parse_retry_after(resp.headers.get("Retry-After"), default=5)
             log.warning(
                 "graph 429 rate-limited, retrying in %ds (attempt %d/%d)",
                 retry_after,
