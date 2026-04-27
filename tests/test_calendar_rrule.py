@@ -6,11 +6,21 @@ from groupware_sync_calendar.rrule import (
 )
 
 
-def test_daily_to_rrule():
+def test_daily_to_rrule_elides_default_interval():
+    """INTERVAL=1 is the RFC 5545 default and is elided by JSCalendar
+    round-trip on the JMAP side. The Graph reader matches that behaviour
+    so paired events don't drift on rrule when the only difference is
+    the redundant INTERVAL=1."""
     graph = {"pattern": {"type": "daily", "interval": 1}, "range": {"type": "noEnd"}}
     result = graph_recurrence_to_rrule(graph)
     assert "FREQ=DAILY" in result
-    assert "INTERVAL=1" in result
+    assert "INTERVAL=" not in result
+
+
+def test_daily_to_rrule_keeps_non_default_interval():
+    graph = {"pattern": {"type": "daily", "interval": 3}, "range": {"type": "noEnd"}}
+    result = graph_recurrence_to_rrule(graph)
+    assert "INTERVAL=3" in result
 
 
 def test_weekly_to_rrule():
@@ -173,8 +183,11 @@ def test_roundtrip_weekly():
 
 
 def test_roundtrip_daily_with_end():
+    """INTERVAL=1 is dropped on the way back out (RFC 5545 default);
+    only frequency, range, and any non-default interval round-trip."""
     original = "FREQ=DAILY;INTERVAL=1;UNTIL=20261231"
     graph = rrule_to_graph_recurrence(original)
     back = graph_recurrence_to_rrule(graph)
     assert "FREQ=DAILY" in back
     assert "UNTIL=20261231" in back
+    assert "INTERVAL=" not in back

@@ -670,8 +670,12 @@ def _graph_to_sync_item(event: dict[str, Any]) -> SyncItem:
         if att_list:
             fields["attendees"] = att_list
 
-    # Reminder
-    if event.get("isReminderOn") and event.get("reminderMinutesBeforeStart") is not None:
+    # Reminder. Graph's isReminderOn=true with reminderMinutesBeforeStart=0
+    # is "alert at start" — Stalwart silently drops alerts with offset
+    # PT0S, so syncing 0 produces a permanent ping-pong (Graph keeps 0,
+    # Stalwart returns no alert, merge swings every run). Treat 0 as
+    # "no reminder" to match Stalwart's behaviour.
+    if event.get("isReminderOn") and event.get("reminderMinutesBeforeStart"):
         fields["reminder_minutes"] = event["reminderMinutesBeforeStart"]
 
     # Conference / online meeting

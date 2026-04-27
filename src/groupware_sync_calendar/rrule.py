@@ -49,13 +49,20 @@ def graph_recurrence_to_rrule(recurrence: dict[str, Any]) -> str:
 
     parts: list[str] = []
 
+    # INTERVAL=1 is the RFC 5545 default; eliding it matches the JSCalendar
+    # round-trip on the JMAP side (which also drops interval=1) and avoids
+    # spurious drift between Graph and Stalwart for weekly/daily series.
+    interval_part = f"INTERVAL={interval}" if interval != 1 else None
+
     if pat_type == "daily":
         parts.append("FREQ=DAILY")
-        parts.append(f"INTERVAL={interval}")
+        if interval_part:
+            parts.append(interval_part)
 
     elif pat_type == "weekly":
         parts.append("FREQ=WEEKLY")
-        parts.append(f"INTERVAL={interval}")
+        if interval_part:
+            parts.append(interval_part)
         days = pattern.get("daysOfWeek", [])
         if days:
             rrule_days = [GRAPH_DAY_TO_RRULE[d] for d in days]
@@ -63,25 +70,29 @@ def graph_recurrence_to_rrule(recurrence: dict[str, Any]) -> str:
 
     elif pat_type == "absoluteMonthly":
         parts.append("FREQ=MONTHLY")
-        parts.append(f"INTERVAL={interval}")
+        if interval_part:
+            parts.append(interval_part)
         parts.append(f"BYMONTHDAY={pattern['dayOfMonth']}")
 
     elif pat_type == "relativeMonthly":
         parts.append("FREQ=MONTHLY")
-        parts.append(f"INTERVAL={interval}")
+        if interval_part:
+            parts.append(interval_part)
         index_num = GRAPH_INDEX_TO_NUM[pattern["index"]]
         day_abbr = GRAPH_DAY_TO_RRULE[pattern["daysOfWeek"][0]]
         parts.append(f"BYDAY={index_num}{day_abbr}")
 
     elif pat_type == "absoluteYearly":
         parts.append("FREQ=YEARLY")
-        parts.append(f"INTERVAL={interval}")
+        if interval_part:
+            parts.append(interval_part)
         parts.append(f"BYMONTH={pattern['month']}")
         parts.append(f"BYMONTHDAY={pattern['dayOfMonth']}")
 
     elif pat_type == "relativeYearly":
         parts.append("FREQ=YEARLY")
-        parts.append(f"INTERVAL={interval}")
+        if interval_part:
+            parts.append(interval_part)
         parts.append(f"BYMONTH={pattern['month']}")
         index_num = GRAPH_INDEX_TO_NUM[pattern["index"]]
         day_abbr = GRAPH_DAY_TO_RRULE[pattern["daysOfWeek"][0]]

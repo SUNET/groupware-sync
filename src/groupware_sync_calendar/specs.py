@@ -32,7 +32,14 @@ CALENDAR_EVENT_SPEC = TypeSpec(
         FieldDef("status", MergeStrategy.SCALAR),
         FieldDef("priority", MergeStrategy.SCALAR),
         FieldDef("privacy", MergeStrategy.SCALAR),
-        FieldDef("free_busy", MergeStrategy.SCALAR),
+        # free_busy: IGNORE because the value spaces don't align. Graph
+        # regularly emits 'tentative', 'oof', 'workingElsewhere' (and we
+        # surface them verbatim), but core JSCalendar only defines
+        # `busy` and `free` (RFC 8984 §4.4.2) and Stalwart silently
+        # drops anything else. Syncing it caused permanent ping-pong on
+        # every event whose Graph showAs wasn't busy/free. Each side
+        # keeps its own free_busy independently.
+        FieldDef("free_busy", MergeStrategy.IGNORE),
         FieldDef("categories", MergeStrategy.SET),
         # sequence/updated/created are server-set timestamps. Each
         # side maintains its own copy and refuses to overwrite (Graph's

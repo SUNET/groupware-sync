@@ -948,9 +948,14 @@ def _jscal_rrule_to_text(rule: dict[str, Any]) -> str:
 
     until = rule.get("until")
     if until is not None:
-        # JSCalendar until is a date or datetime string
-        # Remove any separators for RRULE format
-        until_str = until.replace("-", "").replace(":", "").replace("T", "T")
+        # JSCalendar until is a LocalDateTime; strip separators for RRULE.
+        # We coerce date-only RRULE UNTIL to T23:59:59 on the way in
+        # (_text_to_jscal_rrule) for spec compliance, so reverse that here:
+        # if the time component is end-of-day, render as a bare date so the
+        # round-trip matches Graph (which stores endDate=YYYY-MM-DD).
+        until_str = until.replace("-", "").replace(":", "")
+        if until_str.endswith("T235959"):
+            until_str = until_str[:-7]
         parts.append(f"UNTIL={until_str}")
 
     return ";".join(parts)
@@ -1069,8 +1074,15 @@ def _jmap_to_sync_item(event: dict[str, Any]) -> SyncItem:
             except (ValueError, TypeError):
                 log.warning("failed to parse duration %r for event %s", duration_str, event.get("id"))
     elif start_str:
-        # No timezone — treat as UTC
+        # No timezone — JSCalendar all-day events MUST NOT carry timeZone
+        # (RFC 8984 §4.4.1), so Stalwart returns an all-day event with
+        # only `start`. Treat the wall time as UTC for `dtstart_utc` and
+        # also surface dtstart_tz="Etc/UTC" so the field round-trips
+        # against Graph (which always returns Windows tz "UTC" for
+        # all-day events). Without this, paired all-day events would
+        # ping-pong on dtstart_tz/dtend_tz forever.
         fields["dtstart_utc"] = start_str if start_str.endswith("Z") else start_str + "Z"
+        fields["dtstart_tz"] = "Etc/UTC"
         if event.get("duration"):
             try:
                 delta = _parse_iso_duration(event["duration"])
@@ -1078,6 +1090,7 @@ def _jmap_to_sync_item(event: dict[str, Any]) -> SyncItem:
                 end_dt = start_dt + delta
                 end_iso = end_dt.isoformat()
                 fields["dtend_utc"] = end_iso if end_iso.endswith("Z") else end_iso + "Z"
+                fields["dtend_tz"] = "Etc/UTC"
             except (ValueError, TypeError):
                 pass
 

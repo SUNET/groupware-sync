@@ -6,10 +6,13 @@ IMMUTABLE (keep A), and IGNORE strategies, as configured by TypeSpec.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
 from groupware_sync.models import MergeStrategy, SyncItem, TypeSpec
+
+log = logging.getLogger(__name__)
 
 
 def _hashable(v: Any) -> Any:
@@ -152,6 +155,11 @@ def merge_item(
                 drift_a.append(fname)
             if chg_vs_b:
                 drift_b.append(fname)
+            if (chg_vs_a or chg_vs_b) and log.isEnabledFor(logging.DEBUG):
+                log.debug(
+                    "drift %s: a=%r b=%r prev=%r merged=%r",
+                    fname, val_a, val_b, val_prev, result,
+                )
             continue
 
         # SCALAR strategy
@@ -180,6 +188,11 @@ def merge_item(
             drift_a.append(fname)
         if merged_val != val_b:
             drift_b.append(fname)
+        if (merged_val != val_a or merged_val != val_b) and log.isEnabledFor(logging.DEBUG):
+            log.debug(
+                "drift %s: a=%r b=%r prev=%r merged=%r",
+                fname, val_a, val_b, val_prev, merged_val,
+            )
 
     merged_updated_at = _max_timestamp(item_a.updated_at, item_b.updated_at)
     merged = SyncItem(
