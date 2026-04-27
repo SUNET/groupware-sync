@@ -108,3 +108,31 @@ def test_neither_changed():
     assert c_a is False
     assert c_b is False
     assert conflicts == 0
+
+
+def test_calendar_metadata_fields_ignored():
+    """Regression: server-bumped `updated`/`sequence` must not register
+    as conflicts. Without IGNORE they made every paired event report
+    a conflict on every run because Graph and JMAP each bump their
+    own copy after a write."""
+    from groupware_sync_calendar.specs import CALENDAR_EVENT_SPEC
+
+    base = {
+        "uid": "evt-1",
+        "summary": "Standup",
+        "dtstart_utc": "2026-04-23T09:00:00Z",
+    }
+    a = SyncItem(
+        "a1", ItemType.CALENDAR_EVENT,
+        {**base, "updated": "2026-04-23T10:00:00Z", "sequence": 5},
+        updated_at=TS_A,
+    )
+    b = SyncItem(
+        "b1", ItemType.CALENDAR_EVENT,
+        {**base, "updated": "2026-04-23T09:00:00Z", "sequence": 3},
+        updated_at=TS_B,
+    )
+    merged, _, _, conflicts = merge_item(a, b, None, CALENDAR_EVENT_SPEC)
+    assert conflicts == 0
+    assert "updated" not in merged.fields
+    assert "sequence" not in merged.fields

@@ -29,9 +29,16 @@ CALENDAR_EVENT_SPEC = TypeSpec(
         FieldDef("privacy", MergeStrategy.SCALAR),
         FieldDef("free_busy", MergeStrategy.SCALAR),
         FieldDef("categories", MergeStrategy.SET),
-        FieldDef("sequence", MergeStrategy.SCALAR),
+        # sequence and updated are server-bumped on every PATCH (Graph
+        # bumps lastModifiedDateTime, JMAP bumps updated). They diverge
+        # between sides immediately after either side accepts a write,
+        # so treating them as user content makes every subsequent run
+        # report a conflict on every paired event. IGNORE keeps the
+        # raw fields out of the merge while updated_at on SyncItem
+        # still drives last-write-wins arbitration.
+        FieldDef("sequence", MergeStrategy.IGNORE),
         FieldDef("created", MergeStrategy.IMMUTABLE),
-        FieldDef("updated", MergeStrategy.SCALAR),
+        FieldDef("updated", MergeStrategy.IGNORE),
         # Reminders
         FieldDef("reminder_minutes", MergeStrategy.SCALAR),
         FieldDef("reminder_action", MergeStrategy.SCALAR),
