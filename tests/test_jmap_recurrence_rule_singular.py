@@ -72,7 +72,7 @@ def test_emit_omits_recurrence_when_no_rrule_field():
 
 # -- Read path: _jmap_to_sync_item accepts both names ------------------------
 
-def _graph_like_event(recurrence_key: str, value) -> dict:
+def _event_payload(recurrence_key: str, value) -> dict:
     return {
         "id": "srv-1",
         "uid": "uid-1",
@@ -86,7 +86,7 @@ def _graph_like_event(recurrence_key: str, value) -> dict:
 
 def test_parse_recurrence_from_singular_object():
     rule = {"@type": "RecurrenceRule", "frequency": "weekly"}
-    item = _jmap_to_sync_item(_graph_like_event("recurrenceRule", rule))
+    item = _jmap_to_sync_item(_event_payload("recurrenceRule", rule))
     assert item.fields.get("rrule") == "FREQ=WEEKLY"
 
 
@@ -94,7 +94,7 @@ def test_parse_recurrence_from_singular_array():
     """Stalwart's probe accepted an array under the singular key too;
     if a server responds in that shape, parse succeeds."""
     rules = [{"@type": "RecurrenceRule", "frequency": "daily"}]
-    item = _jmap_to_sync_item(_graph_like_event("recurrenceRule", rules))
+    item = _jmap_to_sync_item(_event_payload("recurrenceRule", rules))
     assert item.fields.get("rrule") == "FREQ=DAILY"
 
 
@@ -103,7 +103,7 @@ def test_parse_recurrence_from_plural_array():
     RFC-8984 plural name after Stalwart fixes the bug (or against any
     other server)."""
     rules = [{"@type": "RecurrenceRule", "frequency": "monthly"}]
-    item = _jmap_to_sync_item(_graph_like_event("recurrenceRules", rules))
+    item = _jmap_to_sync_item(_event_payload("recurrenceRules", rules))
     assert item.fields.get("rrule") == "FREQ=MONTHLY"
 
 
