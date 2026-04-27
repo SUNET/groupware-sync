@@ -8,6 +8,8 @@ recurrence↔RRULE translation.
 """
 from __future__ import annotations
 
+import copy
+import json
 import logging
 import time
 from datetime import datetime
@@ -98,6 +100,72 @@ _PARTSTAT_TO_RESPONSE: dict[str, str] = {
     "declined": "declined",
     "tentative": "tentativelyAccepted",
 }
+
+
+def _redact_graph_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of *body* with free-text fields redacted.
+
+    Same intent as the JMAP adapter's _redact_event_payload: on a Graph
+    4xx the server's error message almost always names a structural
+    property (capacity limits, invalid enum, etc.); free-text fields
+    only leak meeting content into operator logs without helping the
+    diagnosis. Redact those.
+
+    Redacted keys (when present, regardless of nesting depth):
+      * top-level ``subject``
+      * ``body.content``
+      * ``location.displayName`` (singular) and any ``locations[*].displayName``
+      * ``attendees[*].emailAddress.{address,name}``
+      * ``organizer.emailAddress.{address,name}``
+    """
+    out = copy.deepcopy(body)
+    if "subject" in out:
+        out["subject"] = "<redacted>"
+    body_field = out.get("body")
+    if isinstance(body_field, dict) and "content" in body_field:
+        body_field["content"] = "<redacted>"
+    loc = out.get("location")
+    if isinstance(loc, dict) and "displayName" in loc:
+        loc["displayName"] = "<redacted>"
+    locs = out.get("locations")
+    if isinstance(locs, list):
+        for entry in locs:
+            if isinstance(entry, dict) and "displayName" in entry:
+                entry["displayName"] = "<redacted>"
+    attendees = out.get("attendees")
+    if isinstance(attendees, list):
+        for att in attendees:
+            ea = att.get("emailAddress") if isinstance(att, dict) else None
+            if isinstance(ea, dict):
+                if "address" in ea:
+                    ea["address"] = "<redacted>"
+                if "name" in ea:
+                    ea["name"] = "<redacted>"
+    org = out.get("organizer")
+    if isinstance(org, dict):
+        ea = org.get("emailAddress")
+        if isinstance(ea, dict):
+            if "address" in ea:
+                ea["address"] = "<redacted>"
+            if "name" in ea:
+                ea["name"] = "<redacted>"
+    return out
+
+
+def _format_graph_error(prefix: str, response: httpx.Response) -> str:
+    """Extract Graph's error code + message from a 4xx response body and
+    format a human-readable exception message. Falls back gracefully
+    when the body isn't JSON or doesn't carry the expected shape."""
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError):
+        return f"{prefix}: HTTP {response.status_code} (non-JSON body)"
+    err = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(err, dict):
+        return f"{prefix}: HTTP {response.status_code} {payload!r}"
+    code = err.get("code", "unknown")
+    message = err.get("message", "")
+    return f"{prefix}: HTTP {response.status_code} {code} — {message}"
 
 
 def _tree_identity_key(event: dict[str, Any]) -> Optional[str]:
@@ -438,6 +506,15 @@ class GraphCalendarAdapter(SyncProvider):
         r = self._write_request(
             "POST", f"/me/calendars/{container_id}/events", json=body
         )
+        if 400 <= r.status_code < 500:
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(
+                    "Graph create failed — request payload: %s",
+                    json.dumps(_redact_graph_payload(body), default=repr),
+                )
+            raise ValueError(_format_graph_error(
+                "Graph create event failed", r,
+            ))
         r.raise_for_status()
         data = r.json()
         return data["id"], data.get("lastModifiedDateTime", "")
@@ -446,6 +523,16 @@ class GraphCalendarAdapter(SyncProvider):
         """Update an existing event. Returns server-assigned fingerprint."""
         body = _sync_item_to_graph(item)
         r = self._write_request("PATCH", f"/me/events/{item.provider_id}", json=body)
+        if 400 <= r.status_code < 500:
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(
+                    "Graph update %s failed — request payload: %s",
+                    item.provider_id,
+                    json.dumps(_redact_graph_payload(body), default=repr),
+                )
+            raise ValueError(_format_graph_error(
+                f"Graph update event {item.provider_id} failed", r,
+            ))
         r.raise_for_status()
         return r.json().get("lastModifiedDateTime", "")
 
