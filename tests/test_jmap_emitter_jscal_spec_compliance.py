@@ -133,3 +133,25 @@ def test_caldav_timed_utc_with_empty_tz_is_coerced_to_etc_utc():
     body = _sync_item_to_jmap(item)
     assert body.get("timeZone") == "Etc/UTC"
     assert isinstance(body.get("start"), str) and body["start"]
+
+
+# -- Bug C: Alert wrapper objects need @type ----------------------------------
+
+def test_alert_wrapper_carries_type_discriminator():
+    """RFC 8984 §5.1.2: every Alert object needs `@type: "Alert"`. Without
+    it, Stalwart stores the alert but its UI deserializer leaves
+    `alert.trigger` undefined, crashing the calendar view with
+    `r.trigger is undefined`."""
+    item = _item(
+        uid="ev-reminder",
+        summary="Standup",
+        dtstart_utc="2026-05-01T10:00:00Z",
+        dtstart_tz="Europe/Stockholm",
+        reminder_minutes=15,
+    )
+    body = _sync_item_to_jmap(item)
+    alerts = body.get("alerts")
+    assert isinstance(alerts, dict) and alerts
+    for alert in alerts.values():
+        assert alert.get("@type") == "Alert"
+        assert alert.get("trigger", {}).get("@type") == "OffsetTrigger"

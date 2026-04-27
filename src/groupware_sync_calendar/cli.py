@@ -138,5 +138,60 @@ def sync_cmd(
     raise typer.Exit(0)
 
 
+@app.command(name="repair-jmap-alerts")
+def repair_jmap_alerts_cmd(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report counts without making changes"),
+) -> None:
+    """One-shot: rewrite malformed Alert objects on Stalwart.
+
+    Earlier emitter versions wrote Alerts without @type="Alert" and
+    older VALARM imports landed without a trigger; both crash Stalwart's
+    calendar UI with `r.trigger is undefined`. Steady-state sync won't
+    rewrite these events on its own (nothing else about them drifts),
+    so this walks every event and patches alerts in place.
+    """
+    _setup_logging(verbose)
+    log = logging.getLogger(__name__)
+
+    from groupware_sync_calendar.adapters.jmap_adapter import JmapCalendarAdapter
+
+    try:
+        cfg = Config.from_env()
+    except ValueError as e:
+        typer.echo(f"config error: {e}", err=True)
+        raise typer.Exit(2)
+
+    try:
+        stalwart_token = fw_auth.get_access_token(
+            cfg.stalwart.auth_database_url, cfg.stalwart.auth_uid, cfg.stalwart.auth_provider_name,
+        )
+    except ValueError as e:
+        typer.echo(f"stalwart auth error: {e}", err=True)
+        raise typer.Exit(2)
+
+    jmap = JmapCalendarAdapter(
+        cfg.stalwart_jmap_url, stalwart_token, calendar_filter=cfg.stalwart_calendar,
+    )
+    try:
+        counts = jmap.repair_malformed_alerts(dry_run=dry_run)
+    except Exception as e:
+        log.error("repair failed: %s", e, exc_info=True)
+        typer.echo(f"repair failed: {e}", err=True)
+        raise typer.Exit(2)
+    finally:
+        jmap.close()
+
+    prefix = "repair (dry-run)" if dry_run else "repair"
+    typer.echo(
+        f"{prefix}: scanned={counts['scanned']}"
+        f" malformed={counts['malformed']}"
+        f" repaired={counts['repaired']}"
+        f" cleared={counts['cleared']}"
+        f" errors={counts['errors']}"
+    )
+    raise typer.Exit(0 if counts["errors"] == 0 else 1)
+
+
 if __name__ == "__main__":
     app()

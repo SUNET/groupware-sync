@@ -589,6 +589,171 @@ class JmapCalendarAdapter(SyncProvider):
                         not_destroyed[item_id],
                     )
 
+    def repair_malformed_alerts(self, *, dry_run: bool = False) -> dict[str, int]:
+        """Rewrite events whose Alert objects crash Stalwart's calendar UI.
+
+        Earlier emitter versions wrote Alert wrappers without
+        ``@type="Alert"``. Stalwart accepted them but its UI deserializer
+        leaves ``alert.trigger`` undefined and crashes with
+        ``r.trigger is undefined``. Old VALARM imports landed with the
+        same shape (some without a trigger at all).
+
+        Steady-state sync never rewrites these events because nothing
+        else about them drifts. This walks every event in the account,
+        rewrites alerts cleanly when a usable OffsetTrigger offset is
+        present, and clears the field otherwise. Returns counts:
+        scanned, malformed, repaired, cleared, errors.
+        """
+        self._ensure_session()
+        scanned = malformed = repaired = cleared = errors = 0
+
+        batch = max(1, self._max_objects_in_get)
+        event_ids: list[str] = []
+        position = 0
+        while True:
+            query_results = self._call([
+                [
+                    "CalendarEvent/query",
+                    {
+                        "accountId": self._account_id,
+                        "position": position,
+                        "limit": batch,
+                    },
+                    "q0",
+                ],
+            ])
+            page_ids: list[str] = []
+            for result in query_results:
+                if result[0] == "CalendarEvent/query":
+                    page_ids = result[1].get("ids", [])
+                    break
+            event_ids.extend(page_ids)
+            if len(page_ids) < batch:
+                break
+            position += len(page_ids)
+
+        for i in range(0, len(event_ids), batch):
+            chunk = event_ids[i:i + batch]
+            get_results = self._call([
+                [
+                    "CalendarEvent/get",
+                    {
+                        "accountId": self._account_id,
+                        "ids": chunk,
+                        "properties": ["id", "alerts"],
+                    },
+                    "g0",
+                ],
+            ])
+            events: list[dict[str, Any]] = []
+            for result in get_results:
+                if result[0] == "CalendarEvent/get":
+                    events = result[1].get("list", [])
+                    break
+
+            updates: dict[str, dict[str, Any]] = {}
+            for event in events:
+                scanned += 1
+                alerts = event.get("alerts")
+                if not alerts or not isinstance(alerts, dict):
+                    continue
+                has_malformed = False
+                usable_offset: Optional[str] = None
+                for alert in alerts.values():
+                    if not isinstance(alert, dict):
+                        has_malformed = True
+                        continue
+                    if alert.get("@type") != "Alert":
+                        has_malformed = True
+                    trigger = alert.get("trigger")
+                    if not isinstance(trigger, dict):
+                        has_malformed = True
+                        continue
+                    is_offset = (
+                        trigger.get("@type") == "OffsetTrigger"
+                        or trigger.get("type") == "offset"
+                    )
+                    if is_offset:
+                        if usable_offset is None:
+                            offset = trigger.get("offset")
+                            if isinstance(offset, str) and offset:
+                                usable_offset = offset
+                    else:
+                        # AbsoluteTrigger / unknown type — drop on rewrite.
+                        has_malformed = True
+                if not has_malformed:
+                    continue
+                malformed += 1
+                if usable_offset is not None:
+                    updates[event["id"]] = {
+                        "alerts": {
+                            "a0": {
+                                "@type": "Alert",
+                                "trigger": {
+                                    "@type": "OffsetTrigger",
+                                    "offset": usable_offset,
+                                    "relativeTo": "start",
+                                },
+                                "action": "display",
+                            },
+                        },
+                    }
+                else:
+                    updates[event["id"]] = {"alerts": None}
+
+            if not updates:
+                continue
+            if dry_run:
+                for patch in updates.values():
+                    if patch["alerts"] is None:
+                        cleared += 1
+                    else:
+                        repaired += 1
+                continue
+
+            set_results = self._call([
+                [
+                    "CalendarEvent/set",
+                    {
+                        "accountId": self._account_id,
+                        "sendSchedulingMessages": False,
+                        "update": updates,
+                    },
+                    "u0",
+                ],
+            ])
+            for result in set_results:
+                if result[0] != "CalendarEvent/set":
+                    continue
+                updated = result[1].get("updated") or {}
+                not_updated = result[1].get("notUpdated") or {}
+                for eid, patch in updates.items():
+                    if eid in updated:
+                        if patch["alerts"] is None:
+                            cleared += 1
+                        else:
+                            repaired += 1
+                    elif eid in not_updated:
+                        errors += 1
+                        log.error(
+                            "repair: event %s failed: %s",
+                            eid, not_updated[eid],
+                        )
+                    else:
+                        errors += 1
+                        log.error(
+                            "repair: event %s missing from CalendarEvent/set response",
+                            eid,
+                        )
+
+        return {
+            "scanned": scanned,
+            "malformed": malformed,
+            "repaired": repaired,
+            "cleared": cleared,
+            "errors": errors,
+        }
+
     def close(self) -> None:
         """Close the underlying httpx client."""
         self._client.close()
@@ -1280,6 +1445,7 @@ def _sync_item_to_jmap(item: SyncItem) -> dict[str, Any]:
         offset = _format_iso_duration(timedelta(minutes=-int(reminder)))
         event["alerts"] = {
             "a0": {
+                "@type": "Alert",
                 "trigger": {
                     "@type": "OffsetTrigger",
                     "offset": offset,
