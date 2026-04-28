@@ -101,7 +101,19 @@ def _build_contact_provider(cfg: Config, side: str) -> SyncProvider:
             f"SYNC_SIDE_{side.upper()}_DAV_* env vars are missing", err=True,
         )
         raise typer.Exit(2)
-    from groupware_sync_contacts.adapters.carddav_adapter import CardDavContactAdapter
+    try:
+        from groupware_sync_contacts.adapters.carddav_adapter import (
+            CardDavContactAdapter,
+        )
+    except ImportError as e:
+        # CardDAV adapter pulls in vobject for vCard parsing. It's not
+        # required by the default jmap/graph topology, so it isn't a hard
+        # dependency — translate the import error into a clear exit.
+        typer.echo(
+            f"side {side}: carddav backend requires the 'vobject' package "
+            f"(pip install vobject): {e}", err=True,
+        )
+        raise typer.Exit(2)
     return CardDavContactAdapter(dav.base_url, dav.username, dav.password)
 
 
