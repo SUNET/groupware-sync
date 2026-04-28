@@ -25,7 +25,6 @@ def _base_cfg(**overrides) -> Config:
         auth_database_url="x", auth_uid="x", auth_provider_name="x",
     )
     base = dict(
-        sync_type="contacts",
         side_a_backend="jmap",
         side_b_backend="graph",
         stalwart=prov,

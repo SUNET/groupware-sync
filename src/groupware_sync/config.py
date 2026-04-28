@@ -37,7 +37,6 @@ class DavConfig:
 
 @dataclass
 class Config:
-    sync_type: str
     # Per-side backend selectors. Defaults preserve the original
     # M365 (Graph) ↔ Stalwart (JMAP) topology so existing deployments are
     # unaffected by the introduction of these fields.
@@ -109,7 +108,6 @@ class Config:
         )
 
         return cls(
-            sync_type=os.environ.get("SYNC_TYPE", "contacts"),
             side_a_backend=side_a_backend,
             side_b_backend=side_b_backend,
             stalwart=maybe_provider("SYNC_STALWART", need_stalwart),

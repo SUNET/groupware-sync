@@ -26,7 +26,6 @@ def _set(monkeypatch, **env):
 def _clean_env(monkeypatch):
     # Clear every variable the Config reads so each test starts fresh.
     for var in [
-        "SYNC_TYPE",
         "SYNC_SIDE_A_BACKEND", "SYNC_SIDE_B_BACKEND",
         "SYNC_STALWART_AUTH_DATABASE_URL", "SYNC_STALWART_AUTH_UID",
         "SYNC_STALWART_AUTH_PROVIDER_NAME", "SYNC_STALWART_JMAP_URL",
