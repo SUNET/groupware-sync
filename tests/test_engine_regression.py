@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from groupware_sync.engine import _merge_one, _save_tree_cursors
+from groupware_sync.engine import _execute_delete, _merge_one, _save_tree_cursors
+from groupware_sync.tree import compare_trees
 from groupware_sync.models import (
     FieldDef,
     ItemType,
@@ -145,6 +146,7 @@ class _RecordingProvider(SyncProvider):
         self.notification_policy = _policy()
         self._raise = raise_on_update
         self.update_calls: list[tuple[str, SyncItem]] = []
+        self.delete_calls: list[tuple[str, str]] = []
 
     @property
     def name(self) -> str:
@@ -172,6 +174,7 @@ class _RecordingProvider(SyncProvider):
         return f"fp-after-update-{self._name}"
 
     def delete_item(self, container_id, item_id):  # noqa: ANN001
+        self.delete_calls.append((container_id, item_id))
         return None
 
 
@@ -306,3 +309,113 @@ def test_merge_success_persists_fingerprints_and_snapshot(session):
 
     assert summary.errors == 0
     assert summary.updated == 1
+
+
+# ---------------------------------------------------------------------------
+# DELETE_ITEM target-id convention (audit MEDIUM #6 / issue #21)
+# ---------------------------------------------------------------------------
+#
+# The auditor was unsure whether `compare_trees` populates `op.node_id` with
+# the target-side id or the source-side id for DELETE_ITEM. The convention
+# (now documented on `SyncOp`) is: for DELETE_ITEM with target_side in
+# {"a","b"}, `node_id` is the target-side id and `paired_node_id` is the
+# other side's id. These tests pin that contract end-to-end so a future
+# refactor of either side fails loudly instead of silently deleting the
+# wrong item.
+
+
+def _build_leaf_tree(container_id: str, container_name: str,
+                     leaf_id: str | None,
+                     identity_key: str = "shared-ik") -> SyncNode:
+    """Build a tree with one container, optionally containing one leaf.
+
+    leaf_id is the side-specific id; identity_key defaults to a shared value
+    so first-sync identity pairing produces an ItemMapping that subsequent
+    syncs can resolve against (matching what real adapters do — e.g., two
+    sides agree on an email but each has its own opaque server id)."""
+    leaves = []
+    if leaf_id is not None:
+        leaves.append(
+            SyncNode(
+                leaf_id, leaf_id, NodeType.LEAF,
+                fingerprint=f"fp-{leaf_id}",
+                identity_key=identity_key,
+                item_type=ItemType.CONTACT,
+            )
+        )
+    container = SyncNode(
+        container_id, container_name, NodeType.CONTAINER, children=leaves,
+    )
+    root = SyncNode("root", "root", NodeType.CONTAINER, children=[container])
+    root.compute_merkle()
+    return root
+
+
+def test_delete_item_target_a_passes_a_side_id(session):
+    """B removed its copy → DELETE_ITEM(target=a) must carry A's id, not B's.
+    Asserted at both the op level and at the executor level."""
+    # First sync: both sides present, establish mapping.
+    tree_a = _build_leaf_tree("container-A", "Contacts", "a-id-1")
+    tree_b = _build_leaf_tree("container-B", "Contacts", "b-id-1")
+    compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
+    session.commit()
+
+    # Second sync: B removed its copy. Mapping still says a-id-1 ↔ b-id-1.
+    tree_a2 = _build_leaf_tree("container-A", "Contacts", "a-id-1")
+    tree_b2 = _build_leaf_tree("container-B", "Contacts", None)
+    ops_list, _ = compare_trees(
+        tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session,
+    )
+
+    deletes = [op for op in ops_list if op.op_type == OpType.DELETE_ITEM]
+    assert len(deletes) == 1
+    op = deletes[0]
+    assert op.target_side == "a"
+    # node_id is the side being deleted FROM (A here).
+    assert op.node_id == "a-id-1"
+    assert op.paired_node_id == "b-id-1"
+
+    # Executor must pass A's id to provider_a.delete_item, not B's.
+    provider_a = _RecordingProvider("a")
+    provider_b = _RecordingProvider("b")
+    summary = SyncSummary()
+    _execute_delete(op, provider_a, provider_b, session, summary)
+
+    assert provider_a.delete_calls == [("container-A", "a-id-1")]
+    assert provider_b.delete_calls == []
+    assert summary.deleted == 1
+    assert summary.errors == 0
+
+
+def test_delete_item_target_b_passes_b_side_id(session):
+    """A removed its copy → DELETE_ITEM(target=b) must carry B's id, not A's.
+    This is the auditor's original concern: that `node_id` might leak the
+    A-side leaf id even when target_side="b"."""
+    tree_a = _build_leaf_tree("container-A", "Contacts", "a-id-1")
+    tree_b = _build_leaf_tree("container-B", "Contacts", "b-id-1")
+    compare_trees(tree_a, tree_b, "prov_a", "prov_b", ItemType.CONTACT, session)
+    session.commit()
+
+    # A removed its copy.
+    tree_a2 = _build_leaf_tree("container-A", "Contacts", None)
+    tree_b2 = _build_leaf_tree("container-B", "Contacts", "b-id-1")
+    ops_list, _ = compare_trees(
+        tree_a2, tree_b2, "prov_a", "prov_b", ItemType.CONTACT, session,
+    )
+
+    deletes = [op for op in ops_list if op.op_type == OpType.DELETE_ITEM]
+    assert len(deletes) == 1
+    op = deletes[0]
+    assert op.target_side == "b"
+    assert op.node_id == "b-id-1"
+    assert op.paired_node_id == "a-id-1"
+
+    provider_a = _RecordingProvider("a")
+    provider_b = _RecordingProvider("b")
+    summary = SyncSummary()
+    _execute_delete(op, provider_a, provider_b, session, summary)
+
+    assert provider_b.delete_calls == [("container-B", "b-id-1")]
+    assert provider_a.delete_calls == []
+    assert summary.deleted == 1
+    assert summary.errors == 0

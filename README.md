@@ -89,6 +89,32 @@ groupware-sync-contacts sync --dry-run --verbose
 groupware-sync-contacts sync --verbose
 ```
 
+### 3. Selecting a backend per side
+
+By default side A is Stalwart (JMAP) and side B is Microsoft 365 (Graph). To
+sync against a CardDAV or CalDAV server instead, set the per-side backend
+selector and provide DAV credentials for that side:
+
+```bash
+# Replace side B (the M365 side) with a CardDAV server:
+export SYNC_SIDE_B_BACKEND=carddav   # or pass --side-b-backend carddav
+export SYNC_SIDE_B_DAV_URL=https://radicale.example.org
+export SYNC_SIDE_B_DAV_USERNAME=alice
+export SYNC_SIDE_B_DAV_PASSWORD=...
+
+groupware-sync-contacts sync --verbose
+```
+
+| Side | Backend selector value | Required env vars |
+|---|---|---|
+| Stalwart JMAP | `jmap` *(default for side A)* | `SYNC_STALWART_*`, `SYNC_STALWART_JMAP_URL` |
+| Microsoft Graph | `graph` *(default for side B)* | `SYNC_M365_*` |
+| CardDAV / CalDAV | `carddav` / `caldav` | `SYNC_SIDE_{A,B}_DAV_URL`, `SYNC_SIDE_{A,B}_DAV_USERNAME`, `SYNC_SIDE_{A,B}_DAV_PASSWORD` |
+
+The contacts CLI accepts `jmap`, `graph`, and `carddav`. The calendar CLI
+accepts `jmap`, `graph`, and `caldav`. CLI flags `--side-a-backend` and
+`--side-b-backend` override the env vars for one-off invocations.
+
 ## Testing
 
 Unit tests (no external dependencies):

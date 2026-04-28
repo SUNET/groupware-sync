@@ -21,6 +21,8 @@ def _fake_cfg() -> Config:
     prov = ProviderConfig(auth_database_url="x", auth_uid="x", auth_provider_name="x")
     return Config(
         sync_type="calendar",
+        side_a_backend="jmap",
+        side_b_backend="graph",
         stalwart=prov,
         stalwart_jmap_url="https://stalwart.invalid",
         stalwart_addressbook=None,
@@ -28,6 +30,8 @@ def _fake_cfg() -> Config:
         m365=prov,
         m365_addressbook=None,
         m365_calendar=None,
+        side_a_dav=None,
+        side_b_dav=None,
         state_database_url="sqlite:///:memory:",
     )
 
