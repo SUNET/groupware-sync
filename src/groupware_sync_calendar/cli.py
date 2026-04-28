@@ -3,17 +3,20 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Optional
 
 import typer
 
 from groupware_sync import auth as fw_auth
-from groupware_sync.config import Config
+from groupware_sync.config import CALENDAR_BACKENDS, Config
 from groupware_sync.engine import sync_trees
 from groupware_sync.models import ItemType
+from groupware_sync.provider import SyncProvider
 from groupware_sync.state.db import make_session_factory
 
 app = typer.Typer(
-    help="Two-way calendar sync between Stalwart and Microsoft 365",
+    help="Two-way calendar sync between supported backends "
+         "(JMAP / Graph / CalDAV)",
     no_args_is_help=True,
 )
 
@@ -39,6 +42,68 @@ def _stdin_isatty() -> bool:
     return sys.stdin.isatty()
 
 
+def _build_calendar_provider(cfg: Config, side: str) -> SyncProvider:
+    """Construct the calendar provider for a given side based on the
+    backend selector. Raises typer.Exit on auth or config errors."""
+    backend = cfg.side_a_backend if side == "a" else cfg.side_b_backend
+
+    if backend not in CALENDAR_BACKENDS:
+        typer.echo(
+            f"side {side}: unsupported calendar backend '{backend}' "
+            f"(expected one of {sorted(CALENDAR_BACKENDS)})", err=True,
+        )
+        raise typer.Exit(2)
+
+    if backend == "jmap":
+        from groupware_sync_calendar.adapters.jmap_adapter import JmapCalendarAdapter
+        try:
+            token = fw_auth.get_access_token(
+                cfg.stalwart.auth_database_url,
+                cfg.stalwart.auth_uid,
+                cfg.stalwart.auth_provider_name,
+            )
+        except ValueError as e:
+            typer.echo(f"stalwart auth error: {e}", err=True)
+            raise typer.Exit(2)
+        return JmapCalendarAdapter(
+            cfg.stalwart_jmap_url, token,
+            calendar_filter=cfg.stalwart_calendar,
+        )
+
+    if backend == "graph":
+        from groupware_sync_calendar.adapters.graph_adapter import GraphCalendarAdapter
+        try:
+            token = fw_auth.get_access_token(
+                cfg.m365.auth_database_url,
+                cfg.m365.auth_uid,
+                cfg.m365.auth_provider_name,
+            )
+        except Exception as e:
+            typer.echo(f"m365 auth error: {e}", err=True)
+            raise typer.Exit(2)
+        return GraphCalendarAdapter(
+            token, calendar_filter=cfg.m365_calendar,
+        )
+
+    # backend == "caldav"
+    dav = cfg.side_a_dav if side == "a" else cfg.side_b_dav
+    if dav is None:
+        typer.echo(
+            f"side {side}: caldav backend selected but "
+            f"SYNC_SIDE_{side.upper()}_DAV_* env vars are missing", err=True,
+        )
+        raise typer.Exit(2)
+    from groupware_sync_calendar.adapters.caldav_adapter import CalDavCalendarAdapter
+    # Reuse the side-specific calendar_filter env var (stalwart_calendar
+    # for side A, m365_calendar for side B) so existing operators don't
+    # learn a third name.
+    calendar_filter = cfg.stalwart_calendar if side == "a" else cfg.m365_calendar
+    return CalDavCalendarAdapter(
+        dav.base_url, dav.username, dav.password,
+        calendar_filter=calendar_filter,
+    )
+
+
 @app.command(name="sync")
 def sync_cmd(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
@@ -47,6 +112,16 @@ def sync_cmd(
         False,
         "--non-interactive",
         help="Skip the interactive confirmation and execute immediately. Intended for cron and CI.",
+    ),
+    side_a_backend: Optional[str] = typer.Option(
+        None, "--side-a-backend",
+        help=f"Backend for side A. Overrides SYNC_SIDE_A_BACKEND. "
+             f"One of: {', '.join(sorted(CALENDAR_BACKENDS))}.",
+    ),
+    side_b_backend: Optional[str] = typer.Option(
+        None, "--side-b-backend",
+        help=f"Backend for side B. Overrides SYNC_SIDE_B_BACKEND. "
+             f"One of: {', '.join(sorted(CALENDAR_BACKENDS))}.",
     ),
 ) -> None:
     """Two-way calendar sync using the tree-based framework engine."""
@@ -62,8 +137,13 @@ def sync_cmd(
         )
         raise typer.Exit(2)
 
-    from groupware_sync_calendar.adapters.graph_adapter import GraphCalendarAdapter
-    from groupware_sync_calendar.adapters.jmap_adapter import JmapCalendarAdapter
+    if side_a_backend is not None:
+        import os
+        os.environ["SYNC_SIDE_A_BACKEND"] = side_a_backend
+    if side_b_backend is not None:
+        import os
+        os.environ["SYNC_SIDE_B_BACKEND"] = side_b_backend
+
     from groupware_sync_calendar.specs import CALENDAR_EVENT_SPEC
 
     try:
@@ -72,24 +152,8 @@ def sync_cmd(
         typer.echo(f"config error: {e}", err=True)
         raise typer.Exit(2)
 
-    try:
-        stalwart_token = fw_auth.get_access_token(
-            cfg.stalwart.auth_database_url, cfg.stalwart.auth_uid, cfg.stalwart.auth_provider_name,
-        )
-    except ValueError as e:
-        typer.echo(f"stalwart auth error: {e}", err=True)
-        raise typer.Exit(2)
-
-    try:
-        m365_token = fw_auth.get_access_token(
-            cfg.m365.auth_database_url, cfg.m365.auth_uid, cfg.m365.auth_provider_name,
-        )
-    except Exception as e:
-        typer.echo(f"m365 auth error: {e}", err=True)
-        raise typer.Exit(2)
-
-    jmap = JmapCalendarAdapter(cfg.stalwart_jmap_url, stalwart_token, calendar_filter=cfg.stalwart_calendar)
-    graph = GraphCalendarAdapter(m365_token, calendar_filter=cfg.m365_calendar)
+    provider_a = _build_calendar_provider(cfg, "a")
+    provider_b = _build_calendar_provider(cfg, "b")
     sf = make_session_factory(cfg.state_database_url)
 
     # Choose engine inputs. --dry-run wins silently over --non-interactive.
@@ -107,7 +171,7 @@ def sync_cmd(
     try:
         with sf() as session:
             summary = sync_trees(
-                jmap, graph, ItemType.CALENDAR_EVENT, CALENDAR_EVENT_SPEC, session,
+                provider_a, provider_b, ItemType.CALENDAR_EVENT, CALENDAR_EVENT_SPEC, session,
                 dry_run=dry_run, confirm=confirm,
             )
     except Exception as e:
@@ -115,8 +179,10 @@ def sync_cmd(
         typer.echo(f"sync failed: {e}", err=True)
         raise typer.Exit(2)
     finally:
-        jmap.close()
-        graph.close()
+        for p in (provider_a, provider_b):
+            close = getattr(p, "close", None)
+            if callable(close):
+                close()
 
     if summary.aborted:
         typer.echo("sync aborted by user — no changes made")

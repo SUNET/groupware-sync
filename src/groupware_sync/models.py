@@ -160,7 +160,21 @@ class SyncItem:
 
 @dataclass
 class SyncOp:
-    """An operation produced by tree comparison, executed later."""
+    """An operation produced by tree comparison, executed later.
+
+    `node_id` semantics differ by op_type — the executor relies on this
+    convention, so producers in tree.py must preserve it:
+
+    - CREATE_ITEM / CREATE_CONTAINER: source-side id (the side opposite of
+      target_side). The executor uses it to fetch the item from the source
+      provider before pushing to the target.
+    - DELETE_ITEM with target_side in {"a", "b"}: target-side id (the id
+      that will be passed to provider.delete_item). `paired_node_id` is
+      the other side's id, used only for cache cleanup.
+    - DELETE_ITEM with target_side="both", MERGE_ITEM, SKIP_SUBTREE: both
+      sides exist, so `node_id` is always the A-side id and
+      `paired_node_id` is the B-side id, regardless of target_side.
+    """
 
     op_type: OpType
     target_side: str  # "a", "b", or "both"

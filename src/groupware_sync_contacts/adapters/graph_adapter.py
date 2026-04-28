@@ -207,7 +207,11 @@ class GraphContactAdapter(SyncProvider):
                     continue
                 r.raise_for_status()
                 item = _graph_to_sync_item(r.json())
-                # Fetch photo separately (stored outside the contact JSON)
+                # Fetch photo separately (stored outside the contact JSON).
+                # 404 means "no photo" and is the common case — leave the
+                # fields unset and move on. Other transport/parse failures
+                # are real and must surface in the logs so they're not
+                # invisible.
                 try:
                     photo_resp = self._request("GET", f"/me/contacts/{cid}/photo/$value")
                     if photo_resp.status_code == 200:
@@ -215,8 +219,16 @@ class GraphContactAdapter(SyncProvider):
                         item.fields["photo"] = base64.b64encode(photo_resp.content).decode("ascii")
                         content_type = photo_resp.headers.get("content-type", "image/jpeg")
                         item.fields["photo_type"] = content_type
+                    elif photo_resp.status_code != 404:
+                        log.warning(
+                            "graph contact %s photo fetch returned %s",
+                            cid, photo_resp.status_code,
+                        )
                 except Exception:
-                    pass  # no photo or error, skip silently
+                    log.warning(
+                        "graph contact %s photo fetch failed", cid,
+                        exc_info=True,
+                    )
                 items.append(item)
             except httpx.HTTPStatusError as e:
                 log.error("graph get contact %s failed: %s", cid, e)
