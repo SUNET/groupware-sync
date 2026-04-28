@@ -1,7 +1,9 @@
 """Read access tokens from an auth database.
 
-Same contract as groupware_sync_contacts.auth — bare SELECT against
-the oc_ioidc_* schema. No dependency on groupware_sync_auth.
+Bare SELECT against the oc_ioidc_* schema (Nextcloud
+`integration_oidc` or the auth helper's own SQLite DB).
+No dependency on groupware_sync_auth — the CLIs use this so the
+sync run can read tokens without pulling in the full helper stack.
 """
 from __future__ import annotations
 

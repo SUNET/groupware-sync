@@ -20,7 +20,6 @@ except TypeError:
 def _fake_cfg() -> Config:
     prov = ProviderConfig(auth_database_url="x", auth_uid="x", auth_provider_name="x")
     return Config(
-        sync_type="calendar",
         side_a_backend="jmap",
         side_b_backend="graph",
         stalwart=prov,
