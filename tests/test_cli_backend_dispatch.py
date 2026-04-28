@@ -12,8 +12,8 @@ without touching the network or instantiating any real client.
 """
 from __future__ import annotations
 
-import typer
 import pytest
+import typer
 
 from groupware_sync.config import Config, DavConfig, ProviderConfig
 from groupware_sync_calendar.cli import _build_calendar_provider

@@ -93,7 +93,19 @@ def _build_calendar_provider(cfg: Config, side: str) -> SyncProvider:
             f"SYNC_SIDE_{side.upper()}_DAV_* env vars are missing", err=True,
         )
         raise typer.Exit(2)
-    from groupware_sync_calendar.adapters.caldav_adapter import CalDavCalendarAdapter
+    try:
+        from groupware_sync_calendar.adapters.caldav_adapter import (
+            CalDavCalendarAdapter,
+        )
+    except ImportError as e:
+        # CalDAV adapter pulls in vobject for iCalendar parsing. It's not
+        # required by the default jmap/graph topology, so translate the
+        # import error into a clear exit instead of letting it crash.
+        typer.echo(
+            f"side {side}: caldav backend requires the 'vobject' package "
+            f"(pip install vobject): {e}", err=True,
+        )
+        raise typer.Exit(2)
     # Reuse the side-specific calendar_filter env var (stalwart_calendar
     # for side A, m365_calendar for side B) so existing operators don't
     # learn a third name.
@@ -228,11 +240,27 @@ def repair_jmap_alerts_cmd(
         typer.echo(f"config error: {e}", err=True)
         raise typer.Exit(2)
 
+    # `repair-jmap-alerts` is JMAP-specific by design and runs against
+    # Stalwart regardless of the side selectors, but the per-side backend
+    # work made `cfg.stalwart.*` optional — when neither side selects
+    # `jmap`, those fields are empty strings and downstream auth code
+    # raises a SQLAlchemy URL parse error rather than a clean ValueError.
+    # Validate up-front so the operator sees the missing-config message.
+    if not (cfg.stalwart.auth_database_url and cfg.stalwart.auth_uid
+            and cfg.stalwart.auth_provider_name and cfg.stalwart_jmap_url):
+        typer.echo(
+            "repair-jmap-alerts requires Stalwart config: set "
+            "SYNC_STALWART_JMAP_URL, SYNC_STALWART_AUTH_DATABASE_URL, "
+            "SYNC_STALWART_AUTH_UID, SYNC_STALWART_AUTH_PROVIDER_NAME",
+            err=True,
+        )
+        raise typer.Exit(2)
+
     try:
         stalwart_token = fw_auth.get_access_token(
             cfg.stalwart.auth_database_url, cfg.stalwart.auth_uid, cfg.stalwart.auth_provider_name,
         )
-    except ValueError as e:
+    except Exception as e:
         typer.echo(f"stalwart auth error: {e}", err=True)
         raise typer.Exit(2)
 

@@ -14,7 +14,6 @@ from __future__ import annotations
 import pytest
 
 from groupware_sync.engine import _execute_delete, _merge_one, _save_tree_cursors
-from groupware_sync.tree import compare_trees
 from groupware_sync.models import (
     FieldDef,
     ItemType,
@@ -34,6 +33,7 @@ from groupware_sync.provider import (
 )
 from groupware_sync.state import ops
 from groupware_sync.state.db import make_session_factory
+from groupware_sync.tree import compare_trees
 
 
 @pytest.fixture
