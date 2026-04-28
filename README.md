@@ -136,41 +136,53 @@ groupware-sync-calendar sync --verbose
 There is also a one-shot `groupware-sync-calendar repair-jmap-alerts`
 command for cleaning up older JMAP events whose VALARMs landed without a
 proper `@type=Alert` (these crash Stalwart's calendar UI). Run it once
-after upgrading from a version older than `0a6dc40`; steady-state sync
-won't rewrite them on its own.
+if you have legacy events created by older builds that wrote alerts
+without `@type=Alert`; steady-state sync won't rewrite them on its own.
 
 ## Security model
 
-Token storage is intentionally simple, and operators should treat the
-backing databases as the trust boundary for live API access:
+Where credentials live and what an attacker with read access to each store
+can do. The trust boundary depends on which OAuth path you use.
 
-- **OAuth access tokens** live in plain columns in the database pointed at
-  by `SYNC_STALWART_AUTH_DATABASE_URL` / `SYNC_M365_AUTH_DATABASE_URL`
-  (`oc_ioidc_userconfig.access_token` in Nextcloud's
-  [`integration_oidc`](https://github.com/julien-nc/integration_oidc) schema,
-  or the auth helper's own SQLite DB at `~/.local/share/groupware-sync/auth.db`).
-- **OAuth client secrets** for providers configured via the auth helper live
-  in the same DB (`oc_ioidc_providers.client_secret`).
-- **CardDAV/CalDAV passwords** are read from `SYNC_SIDE_{A,B}_DAV_PASSWORD`
-  env vars at runtime; no on-disk storage by this tool.
+**OAuth access tokens** are read from the database pointed at by
+`SYNC_STALWART_AUTH_DATABASE_URL` / `SYNC_M365_AUTH_DATABASE_URL`. Two
+paths are supported:
 
-Anyone who can read those databases can impersonate the synced user against
-the configured backends until the access token expires (refresh-token
-rotation is handled by Nextcloud's `integration_oidc`, not by this tool).
+- **Nextcloud `integration_oidc`** — access tokens are stored in plain
+  columns of the
+  [`integration_oidc`](https://github.com/julien-nc/integration_oidc)
+  schema (`oc_ioidc_userconfig.access_token`). Refresh-token storage and
+  rotation are owned by Nextcloud, not this tool. Anyone who can read
+  those rows has live API access until the access token expires.
+- **Auth helper (`groupware-sync-auth`)** — access tokens (and
+  `oc_ioidc_providers.client_secret` for providers configured via the
+  helper) live in the helper's SQLite DB at
+  `~/.local/share/groupware-sync/auth.db`. Refresh tokens live in the OS
+  keyring; `groupware-sync-auth tick` / `refresh` uses them to rotate
+  access tokens. In this mode the keyring is part of the trust boundary
+  too — the SQLite DB alone is not the only secret-bearing component.
+
+**CardDAV/CalDAV passwords** are read from `SYNC_SIDE_{A,B}_DAV_PASSWORD`
+env vars at runtime; this tool does not persist them.
+
 Practical guidance for operators:
 
-- Restrict filesystem permissions on the SQLite DB to the sync user
+- Restrict filesystem permissions on `auth.db` to the sync user
   (`chmod 600`) and keep it on the same host as the cron job.
 - For MySQL/Postgres-backed Nextcloud DBs, use a dedicated read-only DB
   user scoped to the `oc_ioidc_*` tables.
-- Rotate provider client secrets and revoke access tokens out of the
-  Nextcloud admin UI if the DB is ever exposed.
+- When running the auth helper, protect the OS keyring/session it writes
+  to — exposed keyring access is equivalent to exposed refresh tokens.
+- Rotate client secrets and revoke access tokens via the appropriate
+  admin UI (Nextcloud or the OAuth provider) if any of these stores are
+  exposed.
 - Do not commit `.env` files containing `SYNC_*_AUTH_*` or
   `SYNC_SIDE_*_DAV_PASSWORD` values.
 
-This mirrors Nextcloud's own model — the tokens have to be readable by the
-sync process, and we deliberately don't add a homegrown encryption-at-rest
-layer that would only have its key sitting next to the data anyway.
+This mirrors the underlying systems' models — the sync process has to be
+able to read whatever token material its OAuth path relies on, and we
+deliberately don't add a homegrown encryption-at-rest layer whose key
+would sit next to the data anyway.
 
 ## Testing
 
